@@ -112,6 +112,8 @@ stays local-only, exactly like the MP3 fixtures):
 
 ```sh
 cargo run --release --bin osu_eval -- osu-maps --out report.csv
+# or, for terminal reading instead of a CSV file:
+cargo run --release --bin osu_eval -- osu-maps --table
 ```
 
 For each `.osz` it extracts the mapper's timing (first uninherited timing

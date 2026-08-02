@@ -30,6 +30,10 @@ struct Cli {
     #[arg(long)]
     out: Option<PathBuf>,
 
+    /// Print a compact, human-readable table to stdout instead of CSV.
+    #[arg(long, conflicts_with = "out")]
+    table: bool,
+
     /// Slowest BPM to consider.
     #[arg(long, default_value_t = 40.0)]
     min_bpm: f64,
@@ -89,6 +93,93 @@ fn fmt_f(v: f64, digits: usize) -> String {
     format!("{v:.digits$}")
 }
 
+/// Max map-name width in table output (longer names are truncated with …).
+const TABLE_MAP_WIDTH: usize = 45;
+
+/// Prints rows as a compact, human-readable table: the CSV's wide
+/// 13-column schema is narrowed by dropping the audio filename (already
+/// implied by the map name) and merging the two meter columns into
+/// `true→detected`. Numeric columns are right-aligned.
+fn print_table(rows: &[Row]) {
+    let headers = [
+        "map", "status", "t_bpm", "d_bpm", "err", "r", "t_off", "d_off", "off_err", "meter",
+    ];
+    let right = [
+        false, false, true, true, true, true, true, true, true, false,
+    ];
+    const COLS: usize = 10;
+
+    let truncate = |s: &str| -> String {
+        if s.chars().count() <= TABLE_MAP_WIDTH {
+            s.to_string()
+        } else {
+            format!(
+                "{}…",
+                s.chars().take(TABLE_MAP_WIDTH - 1).collect::<String>()
+            )
+        }
+    };
+
+    let mut data: Vec<[String; COLS]> = Vec::new();
+    for r in rows {
+        let meter = if r.meter_true.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{}→{}",
+                r.meter_true,
+                if r.meter_detected.is_empty() {
+                    "-"
+                } else {
+                    &r.meter_detected
+                }
+            )
+        };
+        data.push([
+            truncate(&r.osz),
+            r.status.clone(),
+            r.true_bpm.clone(),
+            r.detected_bpm.clone(),
+            r.bpm_error.clone(),
+            r.true_bpm_rank.clone(),
+            r.true_offset_ms.clone(),
+            r.detected_offset_ms.clone(),
+            r.offset_error_ms.clone(),
+            meter,
+        ]);
+    }
+
+    let mut widths = [0usize; COLS];
+    for (i, h) in headers.iter().enumerate() {
+        widths[i] = h.len();
+    }
+    for row in &data {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+
+    let render = |cells: &[String; COLS]| -> String {
+        let mut line = String::new();
+        for (i, cell) in cells.iter().enumerate() {
+            if right[i] {
+                line.push_str(&format!("{:>width$}  ", cell, width = widths[i]));
+            } else {
+                line.push_str(&format!("{:<width$}  ", cell, width = widths[i]));
+            }
+        }
+        line.trim_end().to_string()
+    };
+
+    let header_owned: [String; COLS] = headers.map(String::from);
+    let header_line = render(&header_owned);
+    println!("{header_line}");
+    println!("{}", "-".repeat(header_line.chars().count()));
+    for row in &data {
+        println!("{}", render(row));
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let opts = DetectOptions {
@@ -118,6 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => Box::new(std::io::stdout()),
     };
     let mut csv = csv::Writer::from_writer(writer);
+    let mut rows: Vec<Row> = Vec::new();
 
     let temp_dir = std::env::temp_dir().join(format!("osu-eval-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir)?;
@@ -137,14 +229,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let timings = match read_osz_timings(osz) {
             Ok(t) => t,
             Err(Skip::Io(msg)) => {
-                let row = Row::skipped(&osz_name, &format!("io: {msg}"));
-                csv.serialize(&row)?;
+                rows.push(Row::skipped(&osz_name, &format!("io: {msg}")));
                 skip_reasons.push((osz_name, format!("io: {msg}")));
                 continue;
             }
             Err(reason) => {
-                let row = Row::skipped(&osz_name, &reason.to_string());
-                csv.serialize(&row)?;
+                rows.push(Row::skipped(&osz_name, &reason.to_string()));
                 skip_reasons.push((osz_name, reason.to_string()));
                 continue;
             }
@@ -153,22 +243,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for timing in &timings {
             let result = analyze(osz, timing, &temp_dir, &opts, &cli);
             match result {
-                Ok((row, Some(offset_err_ms), bpm_ok)) => {
+                Ok((row, offset_err, bpm_ok)) => {
                     if bpm_ok {
                         bpm_correct += 1;
                     }
-                    offset_errors_ms.push(offset_err_ms);
-                    csv.serialize(&row)?;
-                }
-                Ok((row, None, bpm_ok)) => {
-                    if bpm_ok {
-                        bpm_correct += 1;
+                    if let Some(err) = offset_err {
+                        offset_errors_ms.push(err);
                     }
-                    csv.serialize(&row)?;
+                    rows.push(row);
                 }
                 Err(msg) => {
-                    let row = Row::skipped(&osz_name, &msg);
-                    csv.serialize(&row)?;
+                    rows.push(Row::skipped(&osz_name, &msg));
                     skip_reasons.push((osz_name.clone(), msg));
                     continue;
                 }
@@ -177,8 +262,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    csv.flush()?;
     std::fs::remove_dir_all(&temp_dir).ok();
+
+    if cli.table {
+        print_table(&rows);
+    } else {
+        for row in &rows {
+            csv.serialize(row)?;
+        }
+        csv.flush()?;
+    }
 
     // Summary statistics on stderr so stdout stays pure CSV.
     eprintln!();
