@@ -66,9 +66,14 @@ Features beyond the reference C++ implementation:
   the beat grid against raw waveform leading-edge energy rather than by
   voting detected onsets, so the offset stays correct even when onset
   detection is sparse (dense/quiet mixes where few onsets survive
-  peak-picking). Offsets run ~25-30ms behind externally-measured ground
-  truth on real audio (both estimators center on the transient's rise
-  rather than its start) — a known, consistent calibration residual.
+  peak-picking). **Known systematic bias**: reported offsets run a
+  consistent ~+26ms late vs human mapper ground truth (mean across 8
+  real songs, range +21 to +30ms; both the onset and slope estimators
+  center on a transient's full rise while humans mark the perceived
+  attack). Practical rule for comparing against osu!-style offsets:
+  `true offset ≈ reported − 26ms ± 5ms`. This is documented rather than
+  auto-corrected because the synthetic reference fixtures (sharp clicks
+  with zero rise time) pin the current calibration.
 - **Experimental time-signature estimation**: each result includes a
   `time_signature` estimate (2/4, 3/4, 4/4, 6/8, 12/8) with a confidence
   score, derived from per-beat accent periodicity (mean-centered

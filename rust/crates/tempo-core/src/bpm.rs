@@ -89,9 +89,17 @@ pub(crate) fn calculate_bpm_with_context(
 // Subharmonic preference rule thresholds (see apply_subharmonic_preference).
 /// The beat phase must dominate the two subdivision phases by this ratio.
 const BEAT_DOMINANCE_RATIO: f64 = 1.25;
-/// The subdivision phases must contain at least this fraction of the beat
-/// phase's support (i.e. the subdivisions are real events, not noise).
-const SUBDIVISION_EVIDENCE_RATIO: f64 = 0.3;
+/// At least one subdivision phase must carry this fraction of the beat
+/// phase's weighted support — i.e. the triplet layer must be musically
+/// PROMINENT, not just present. A genuine triplet-feel song's
+/// subdivisions are nearly as strong as its beats (boy for the weekend:
+/// 0.57), so its 3x detection really is the rhythm section playing
+/// triplets over a slower beat. Incidental swing/syncopation over a clear
+/// fast beat is far weaker (Dear You: 0.27 — the 174 pulse is plainly the
+/// beat; redefining it as 58 would contradict what any listener taps).
+/// Subsumes the old sum-based evidence check: max >= 0.35 implies
+/// sum >= 0.35 > 0.3.
+const SUBDIVISION_SALIENCE_RATIO: f64 = 0.35;
 /// The fundamental's weighted confidence must retain at least this fraction
 /// of the harmonic's (the harmonic naturally collects all subdivision votes,
 /// so the fundamental always has less; this just ensures it's substantial).
@@ -122,9 +130,10 @@ const SCAN_UNCERTAINTY_MARGIN: f64 = 1.5;
 /// - beat phase dominance: the fundamental's best phase has clearly more
 ///   weighted support than either triplet subdivision phase (accents fall
 ///   on the beat), and
-/// - subdivision evidence: the subdivision phases contain real onsets (the
-///   song genuinely has a triplet feel — without this, plain songs whose
-///   beats merely alias into the subharmonic's grid would flip), and
+/// - subdivision salience: at least one subdivision phase carries >= 35%
+///   of the beat phase's weighted support — a genuinely prominent triplet
+///   layer, not incidental swing (regression: Dear You, a true 174 BPM
+///   song whose 27%-salience subdivisions got it thirded to 58), and
 /// - substantial support: the fundamental's total weighted confidence is a
 ///   reasonable fraction of the harmonic's, and
 /// - scan uncertainty: the scan's top-2 margin is below
@@ -168,7 +177,7 @@ fn apply_subharmonic_preference(
     let c_sub2 = gapdata.gap_confidence((beat_pos + interval * 2 / 3) % interval, interval);
 
     let beat_dominant = c_beat >= BEAT_DOMINANCE_RATIO * c_sub1.max(c_sub2);
-    let subdivisions_real = c_sub1 + c_sub2 >= SUBDIVISION_EVIDENCE_RATIO * c_beat;
+    let subdivision_salient = c_sub1.max(c_sub2) >= SUBDIVISION_SALIENCE_RATIO * c_beat;
     let substantial_support = w_sub >= FUNDAMENTAL_SUPPORT_RATIO * w_seed;
 
     // Only second-guess an uncertain scan. A single surviving candidate is
@@ -179,7 +188,7 @@ fn apply_subharmonic_preference(
     let scan_uncertain =
         tempo.len() >= 2 && tempo[0].fitness / tempo[1].fitness < SCAN_UNCERTAINTY_MARGIN;
 
-    if beat_dominant && subdivisions_real && substantial_support && scan_uncertain {
+    if beat_dominant && subdivision_salient && substantial_support && scan_uncertain {
         let fitness = gapdata.confidence_for_bpm(onsets, sub_interval);
         tempo[0] = TempoResult {
             bpm: sub_bpm,

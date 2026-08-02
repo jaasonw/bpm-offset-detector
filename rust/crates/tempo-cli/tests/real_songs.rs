@@ -162,6 +162,25 @@ fn leave_the_lights_on() {
     assert_meter_not_wrong(&json, &["4/4"]);
 }
 
+/// True tempo 174.11 BPM (mapper ground truth from osu! map #74586).
+/// Regression test for the second /3 subharmonic false positive: unlike
+/// Leave the Lights On (decisive scan, blocked by the margin gate), this
+/// scan was uncertain (margin < 1.5), so the gate allowed the flip to
+/// 58.038 = 174.11/3. The fix requires a PROMINENT triplet layer
+/// (subdivision salience >= 35%); Dear You's is 27%.
+///
+/// Offset and meter are NOT asserted: this is a 2008-era map (looser
+/// timing standards), and the experimental meter stage currently reports
+/// 6/8 for this song — a known limitation, deferred (its lag-6
+/// autocorrelation wins over the mapper's 4/4).
+#[test]
+fn dear_you() {
+    let Some(json) = analyze("Dear You.mp3") else {
+        return;
+    };
+    assert_top_bpm(&json, 174.11);
+}
+
 /// True tempo 180 BPM 4/4, offset 726ms. Regression test for a competing
 /// periodicity at a non-octave ratio: a regular percussion layer at ~4:3
 /// of the beat (241.291 BPM) outscores the true tempo under the scan's

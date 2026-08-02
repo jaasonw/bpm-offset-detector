@@ -511,3 +511,60 @@ Validated end state (all committed as e2e assertions): boy for the
 weekend 68.000 BPM, Call Me Maybe 120.000, Leave the Lights On 170.000
 (was 56.667), honeycolor 180.098 (was 241.291) with offset 0.090 =
 ground-truth grid + the known systematic residual. 48 tests passing.
+
+### Task 17: osu-eval harness + offset bias measurement + Dear You /3 false positive
+
+**osu-eval harness** (`crates/tempo-cli/src/bin/osu_eval.rs`, lib
+`crates/tempo-cli/src/osu.rs`): compares detection against human mapper
+ground truth from osu! beatmapsets (.osz = zip of .osu text + audio).
+Parses [General]/[TimingPoints] (first uninherited point: BPM =
+60000/beatLength, offset = time ms, meter = beats/bar), skips
+variable-BPM maps, dedupes difficulties sharing timing, emits per-map
+CSV + summary stats. tempo-cli gained a small lib.rs so decode_audio_file
+is shared between the two binaries. rust/osu-maps/ is gitignored (.osz
+bundles copyrighted audio). Local-only tool, not CI.
+
+**First real run (6 maps) — offset bias is systematic, not random:**
+offset errors +26.9, +23.6, +26.1, +25.3, +26.2ms (mean +25.7ms);
+combined with the 3 original songs (+26/+21/+30) that's 8 songs at a
+mean of ~+26ms late, all within +-5ms of the mean. Both the ODF onset
+peaks and the slope-window estimator lock onto a transient's fully
+developed rise; human mappers mark the perceived attack, earlier in the
+rise. Decision: DOCUMENT the bias (README gives the practical rule
+"true offset ~= reported - 26ms +- 5ms") rather than subtract a
+calibration constant, because the synthetic reference fixtures (sharp
+clicks, zero rise time) pin the current calibration and the harness now
+self-reports the bias on every run. Revisit if the constant ever
+matters more than fixture integrity.
+
+**Dear You /3 false positive (Task 17b):** DJ Genericname - Dear You
+(true 174.11 BPM per the mapper) was thirded to 58.038. Unlike Leave the
+Lights On (decisive scan, blocked by the margin gate), this scan was
+uncertain (margin 1.07), so the gate allowed the flip. Diagnosis
+(env-gated instrumentation, since removed) compared the three flip
+cases side by side:
+
+| case | verdict | margin | c_sub1/c_beat (subdivision salience) |
+|---|---|---|---|
+| boy for the weekend (204->68) | TRUE flip | 1.242 | 0.569 |
+| Dear You (174->58) | FALSE flip | 1.071 | 0.272 |
+| Leave the Lights On (170->56.7) | FALSE flip | 1.756 | 0.475 |
+
+The discriminator: a genuine triplet-feel song's subdivisions are nearly
+as strong as its beats (0.57 — the 3x detection really is the rhythm
+section playing triplets over a slow beat); incidental swing over a
+clear fast beat is far weaker (0.27). Fix: replaced the sum-based
+SUBDIVISION_EVIDENCE_RATIO (0.3) with a per-phase SALIENCE floor
+(SUBDIVISION_SALIENCE_RATIO = 0.35: at least one subdivision phase must
+carry >= 35% of the beat phase's weighted support), which subsumes the
+old check (max >= 0.35 implies sum >= 0.35 > 0.3) and is strictly
+stricter, so no regression risk toward more flips.
+
+Validated: Dear You now 174.113 (rank 1) — the osu-eval harness reports
+6/6 maps within 0.5 BPM of mapper ground truth; boy for the weekend
+still flips to 68.000; Leave the Lights On stays 170.000; the synthetic
+triplet fixture (salience ~0.4) still flips. Offset errors across the 6
+maps: mean +24.5ms, stddev 2.7ms. Dear You's meter (6/8 vs mapper's
+4/4) is a known deferred limitation of the experimental meter stage —
+its lag-6 autocorrelation wins on this song's accent data. 59 tests
+passing.
