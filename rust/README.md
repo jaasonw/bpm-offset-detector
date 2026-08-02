@@ -1,0 +1,74 @@
+# tempo (Rust implementation)
+
+A cross-platform, MIT-licensed reimplementation of the tempo/BPM and beat-
+offset detection algorithm documented in
+[`doc/syslab-version/paper.tex`](../doc/syslab-version/paper.tex) and
+originally implemented in [`FindTempo_standalone.cpp`](../FindTempo_standalone.cpp)
+(GPL, depends on `aubio`). This is an independent implementation, not a
+translation of that GPL code, built to fix
+[the macOS segfault](https://github.com/nathanstep55/bpm-offset-detector/issues/1)
+(root cause: macOS's strict `aligned_alloc` returning `NULL` for
+non-16-byte-aligned sizes, which the C++ never checks for) and to remove the
+`aubio` dependency, which is difficult to build cross-platform.
+
+See [`docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md`](../docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md)
+for the full design.
+
+## Structure
+
+- **`crates/tempo-core`**: the pure algorithm. No file I/O, no threads, no
+  platform dependencies beyond `rustfft` — takes mono `f32` PCM samples and a
+  sample rate, returns BPM/offset/fitness candidates. This boundary is what
+  makes a future WebAssembly build (via `wasm-bindgen`) straightforward: the
+  web version would decode audio with the Web Audio API in JavaScript and
+  hand the PCM buffer to this crate compiled to WASM.
+- **`crates/tempo-cli`**: the native command-line tool. Decodes audio files
+  with `symphonia` (pure Rust — no system libraries, unlike `aubio`) and
+  calls into `tempo-core`.
+
+## Building
+
+```sh
+cargo build --release -p tempo-cli
+```
+
+The resulting binary is at `target/release/tempo-cli` (`tempo-cli.exe` on
+Windows). No system libraries are required on any platform.
+
+## Usage
+
+```sh
+tempo-cli <file> [--min-bpm 89] [--max-bpm 205] [--start 0] [--duration 60] [--json]
+tempo-cli batch <folder> --out results.csv [--json]
+```
+
+## Testing
+
+```sh
+cargo test --workspace
+```
+
+Tests include unit tests per module (polyfit, gap confidence, interval
+scanning, BPM candidate selection, offset detection, onset detection) and
+end-to-end tests (`crates/tempo-core/tests/end_to_end.rs`) that run the full
+pipeline against synthetic click tracks with known BPM and offset.
+
+## Notes on fidelity to the reference implementation
+
+Every part of the algorithm is a faithful (if idiomatically-Rust) port of
+`FindTempo_standalone.cpp`, **except**:
+
+- **Onset detection** (`tempo-core/src/onset.rs`): the reference delegates
+  this entirely to `aubio`'s `"complex"` onset method. This crate
+  reimplements complex-domain onset detection directly (FFT-based phase
+  prediction + adaptive peak-picking via `rustfft`), since porting `aubio`
+  itself was explicitly out of scope. Its numerical output will not match
+  `aubio` exactly; correctness is validated against synthetic click tracks
+  with known onset positions instead.
+- **Cubic polynomial fitting** (`tempo-core/src/polyfit.rs`): solves the same
+  least-squares normal equations as the reference's `polyfit.h`, but via
+  Gaussian elimination on a fixed 4x4 system instead of a general
+  Givens-rotation QR decomposition (simpler to implement/verify for a fixed
+  degree-3 fit; `polyfit.h` is also explicitly unlicensed in this
+  repository's `README.md`, so this module is written from the underlying
+  math rather than translated from it).

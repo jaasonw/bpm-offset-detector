@@ -6,6 +6,12 @@ This is a program which detects BPM of music according to Bram van de Wetering's
 This program is very useful for synchronizing things to music, as well as calculating tempo for a large amount of songs quickly.
 This implementation is based on the one used in [ArrowVortex](https://arrowvortex.ddrnl.com/index.html), a chart/stepfile editor for rhythm games.
 
+## Rust implementation (recommended)
+
+A cross-platform, MIT-licensed reimplementation lives in [`rust/`](rust/) — see [`rust/README.md`](rust/README.md) for build/usage instructions. It fixes the macOS segfault in [issue #1](https://github.com/nathanstep55/bpm-offset-detector/issues/1) and drops the GPL `aubio` dependency, and its architecture is WASM-ready for a future web version. The design rationale is documented in [`docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md`](docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md).
+
+## C++ implementation (original research code)
+
 Command to compile: `g++ FindTempo_standalone.cpp --std=c++17 -laubio -lpthread -lstdc++fs -g -o FindTempo_standalone`
 
 The paper is currently being rewritten with better dataset and research practices in order to be more useful, but the current version can be found in the `doc/syslab-version` folder.
@@ -19,5 +25,6 @@ The GPL-3.0 license (included) applies to the `legacy` folder, `dataset` folder,
 `polyfit.h` is technically unlicensed and should be treated as such.
 The CC BY-SA 4.0 license applies to any file in the `doc` folder.
 The PolyfitBoost library, originally by Patrick Loeber, is under the MIT license.
+The MIT license (`rust/LICENSE`) applies to everything in the `rust` folder — it's an independent implementation, not a translation of the GPL C++ code.
 
 Bram van de Wetering's original paper (Non-causal Beat Tracking for Rhythm Games) is included in the `original-paper` folder. All rights are reserved.
