@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use tempo_core::{detect, DetectOptions, TempoResult};
+use tempo_core::{detect_with_onsets, estimate_meter, DetectOptions, MeterEstimate, TempoResult};
 
 use decode::decode_audio_file;
 
@@ -83,6 +83,26 @@ impl From<TempoResult> for ResultOut {
     }
 }
 
+#[derive(Serialize)]
+struct MeterOut {
+    time_signature: String,
+    confidence: f64,
+    ambiguous: bool,
+    /// Always true: meter estimation is a heuristic hint, not ground truth.
+    experimental: bool,
+}
+
+impl From<MeterEstimate> for MeterOut {
+    fn from(m: MeterEstimate) -> Self {
+        MeterOut {
+            time_signature: m.notation,
+            confidence: m.confidence,
+            ambiguous: m.ambiguous,
+            experimental: true,
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -133,10 +153,22 @@ fn run_single(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (samples, sample_rate) = decode_audio_file(file)?;
     let slice = slice_to_range(&samples, sample_rate, options);
-    let results = detect(slice, sample_rate, &detect_options_from(options));
+    let (onsets, results) = detect_with_onsets(slice, sample_rate, &detect_options_from(options));
+
+    let meter = results
+        .first()
+        .and_then(|top| estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset));
 
     if options.json {
-        let out: Vec<ResultOut> = results.into_iter().map(ResultOut::from).collect();
+        #[derive(Serialize)]
+        struct SingleOut {
+            results: Vec<ResultOut>,
+            meter_estimate: Option<MeterOut>,
+        }
+        let out = SingleOut {
+            results: results.into_iter().map(ResultOut::from).collect(),
+            meter_estimate: meter.map(MeterOut::from),
+        };
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         for r in &results {
@@ -144,6 +176,15 @@ fn run_single(
                 "[RESULT] {:.3} BPM, offset @ {:.3} sec, fitness {:.3}",
                 r.bpm, r.offset, r.fitness
             );
+        }
+        match &meter {
+            Some(m) => println!(
+                "[METER] {} (experimental estimate, confidence {:.2}{})",
+                m.notation,
+                m.confidence,
+                if m.ambiguous { ", ambiguous" } else { "" }
+            ),
+            None => println!("[METER] insufficient data for an estimate"),
         }
     }
 
@@ -162,6 +203,8 @@ fn run_batch(
         bpm: f64,
         offset: f64,
         fitness: f64,
+        time_signature: String,
+        meter_confidence: f64,
     }
 
     let mut rows = Vec::new();
@@ -187,7 +230,16 @@ fn run_batch(
             }
         };
         let slice = slice_to_range(&samples, sample_rate, options);
-        let results = detect(slice, sample_rate, &detect_options_from(options));
+        let (onsets, results) =
+            detect_with_onsets(slice, sample_rate, &detect_options_from(options));
+
+        let meter = results
+            .first()
+            .and_then(|top| estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset));
+        let (meter_notation, meter_confidence) = meter
+            .as_ref()
+            .map(|m| (m.notation.clone(), m.confidence))
+            .unwrap_or_else(|| (String::new(), 0.0));
 
         for (i, r) in results.into_iter().enumerate() {
             rows.push(BatchRow {
@@ -196,6 +248,8 @@ fn run_batch(
                 bpm: r.bpm,
                 offset: r.offset,
                 fitness: r.fitness,
+                time_signature: meter_notation.clone(),
+                meter_confidence,
             });
         }
     }
@@ -205,7 +259,15 @@ fn run_batch(
         fs::write(out, json)?;
     } else {
         let mut writer = csv::Writer::from_path(out)?;
-        writer.write_record(["file", "rank", "bpm", "offset", "fitness"])?;
+        writer.write_record([
+            "file",
+            "rank",
+            "bpm",
+            "offset",
+            "fitness",
+            "time_signature",
+            "meter_confidence",
+        ])?;
         for row in &rows {
             writer.write_record([
                 row.file.clone(),
@@ -213,6 +275,8 @@ fn run_batch(
                 row.bpm.to_string(),
                 row.offset.to_string(),
                 row.fitness.to_string(),
+                row.time_signature.clone(),
+                row.meter_confidence.to_string(),
             ])?;
         }
         writer.flush()?;

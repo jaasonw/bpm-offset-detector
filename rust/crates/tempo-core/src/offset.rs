@@ -84,7 +84,7 @@ fn base_offset_for_bpm(gapdata: &mut GapData, sample_rate: u32, onsets: &[Onset]
 /// before it. Onsets (sudden increases in energy) show up as positive
 /// spikes; this is used to disambiguate a beat position from its offbeat
 /// (half a beat later) by checking which one lands on more leading edges.
-fn compute_slopes(samples: &[f32], sample_rate: u32) -> Vec<f64> {
+pub(crate) fn compute_slopes(samples: &[f32], sample_rate: u32) -> Vec<f64> {
     let num_frames = samples.len();
     let mut out = vec![0.0f64; num_frames];
 

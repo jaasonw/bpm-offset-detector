@@ -39,8 +39,27 @@ Windows). No system libraries are required on any platform.
 
 ```sh
 tempo-cli <file> [--min-bpm 40] [--max-bpm 260] [--start 0] [--duration 60] [--json]
+                 [--no-subharmonic-preference]
 tempo-cli batch <folder> --out results.csv [--json]
 ```
+
+Features beyond the reference C++ implementation:
+
+- **Wider default BPM range** (40–260 vs the reference's 89–205), so slow
+  songs aren't reported as their in-range octave multiples.
+- **Subharmonic preference**: triplet-feel songs (12/8, shuffle, slow jams)
+  whose beats all align at 3x the true tempo are re-labeled to the true
+  tempo when the accent evidence supports it (e.g. 68 BPM instead of
+  203.978). Disable with `--no-subharmonic-preference` for raw reference
+  behavior.
+- **Experimental time-signature estimation**: each result includes a
+  `time_signature` estimate (2/4, 3/4, 4/4, 6/8, 12/8) with a confidence
+  score, derived from per-beat accent structure. Treat low-confidence
+  (<0.3) estimates as unreliable; only the beats-per-bar grouping is
+  estimated (4/4 vs 2/2 is notational, not acoustic).
+- **Gapless decoding**: MP3 encoder delay/padding is trimmed, so reported
+  offsets line up with the original source audio instead of being shifted
+  late by 25-50ms.
 
 ## Testing
 

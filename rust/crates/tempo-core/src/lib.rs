@@ -12,11 +12,13 @@
 mod bpm;
 mod gapdata;
 mod interval;
+mod meter;
 mod offset;
 mod onset;
 mod polyfit;
 mod window;
 
+pub use meter::MeterEstimate;
 pub use polyfit::{polyfit_cubic, polyval};
 
 /// A single detected onset (the start of a sound), at a sample position
@@ -107,8 +109,34 @@ pub fn calculate_offset(
 /// then BPM detection, then offset detection. This is the primary entry
 /// point for real audio.
 pub fn detect(samples: &[f32], sample_rate: u32, opts: &DetectOptions) -> Vec<TempoResult> {
+    detect_with_onsets(samples, sample_rate, opts).1
+}
+
+/// Like [`detect`], but also returns the detected onsets, for callers that
+/// want to run further analysis (e.g. [`estimate_meter`]) without
+/// re-running onset detection.
+pub fn detect_with_onsets(
+    samples: &[f32],
+    sample_rate: u32,
+    opts: &DetectOptions,
+) -> (Vec<Onset>, Vec<TempoResult>) {
     let onsets = onset::find_onsets(samples, sample_rate);
     let mut results = calculate_bpm(&onsets, sample_rate, opts);
     calculate_offset(samples, sample_rate, &onsets, &mut results);
-    results
+    (onsets, results)
+}
+
+/// Estimates the time signature over the beat grid implied by a detection
+/// result. Experimental: only the beats-per-bar grouping (2, 3, 4, 6, 12)
+/// is estimated, from per-beat accent contrast, and the estimate is a
+/// hint rather than ground truth (see the meter module docs). Returns
+/// `None` when there's too little data to estimate.
+pub fn estimate_meter(
+    onsets: &[Onset],
+    samples: &[f32],
+    sample_rate: u32,
+    bpm: f64,
+    offset: f64,
+) -> Option<MeterEstimate> {
+    meter::estimate_meter(onsets, samples, sample_rate, bpm, offset)
 }

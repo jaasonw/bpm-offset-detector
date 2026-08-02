@@ -334,3 +334,67 @@ decoding — this was judged to add limited additional confidence for the
 effort of also patching and building the C++ side. It remains a reasonable
 follow-up if a stronger fidelity claim against the original aubio-based
 pipeline is ever needed.
+
+---
+
+## Post-release feature work (2026-08-02, prompted by real-world testing)
+
+After the initial release, testing against a real 68 BPM triplet-feel MP3
+("boy for the weekend") exposed three issues, addressed in three commits:
+
+### Task 11: Widen default BPM range to 40-260
+
+The 68 BPM song was reported as its in-range octave multiples (136, 204)
+because 68 was below the reference's 89 BPM floor. Defaults widened from
+89-205 to 40-260 (~3.3x more candidate intervals, acceptable runtime).
+Regression test: `bpm::tests::detects_slow_bpm_below_the_reference_range`
+(TDD: failed with 136 before the change).
+
+### Task 12 (Part B): Gapless decoding for MP3 offset accuracy
+
+Offsets on MP3s were shifted late by encoder delay/padding. Enabled
+symphonia's `enable_gapless` FormatOption (trims via LAME Xing/Info
+metadata). Measured: synthetic 128bpm MP3 offset 0.105s -> 0.080s (exact
+match to source WAV); user's MP3 0.586s -> 0.560s. The remaining ~30ms on
+the user's file vs their 0.530s ground truth is real-audio onset placement
+(synthetic MP3 is exact) — tracked as a calibration follow-up.
+
+### Task 13 (Part A): Subharmonic preference layer
+
+Under constant-strength voting, the song's 3x harmonic (203.978) beat the
+true 68 BPM because every onset (beats AND triplet subdivisions) aligns at
+the 3x rate. Key design analysis: a pure confidence-threshold rule cannot
+be made safe — even/odd backbeat accenting makes half-tempo intrinsically
+competitive on ANY even-tempo song, so /2 disambiguation is impossible
+without false tempo-halving. The implemented rule is /3-only and requires
+ALL of: beat phase clearly dominates the subdivision phases (weighted by
+onset strength), subdivisions contain real onsets, and the fundamental
+retains >= 45% of the harmonic's weighted confidence. `find_onsets` now
+reports real strengths (ODF peak height, mean-normalized); the BPM scan
+still votes with constant weight. Opt out via
+`--no-subharmonic-preference` / `DetectOptions::subharmonic_preference`.
+
+Validated: user's MP3 -> 68.000 BPM #1 at default range; synthetic
+triplet train -> 68; true-204 backbeat guard stays 204; opt-out returns
+raw 204 behavior; all prior tests unaffected.
+
+### Task 14 (Part C): Experimental time-signature estimation
+
+`tempo_core::estimate_meter` groups the beat grid into {2,3,4,6,12} by
+per-beat accent contrast (summed onset strengths near each beat; waveform
+slope fallback when strengths are uniform). Output includes conventional
+notation, a confidence score, and an ambiguity flag; only beats-per-bar is
+estimated (denominator is notational). CLI prints a `[METER]` line and
+adds `time_signature`/`meter_confidence` to batch output; `--json` output
+restructured to `{"results": [...], "meter_estimate": {...}}`.
+
+Two real bugs found via TDD: (1) the beat grid extended past the last
+onset, so trailing zero-accent beats polluted phase statistics (would
+systematically misfire on fade-out endings); (2) multiples of the true
+grouping tie it exactly (a period-g pattern is also period-2g), so ties
+now break toward the smaller grouping and only strictly-worse runner-ups
+count toward ambiguity.
+
+Validated on the user's MP3: reports 12/8 at confidence 1.00 — consistent
+with the triplet feel that caused the original 3x misdetection. Uniform
+click trains correctly report near-zero confidence.
