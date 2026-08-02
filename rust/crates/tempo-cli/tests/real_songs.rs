@@ -162,6 +162,54 @@ fn leave_the_lights_on() {
     assert_meter_not_wrong(&json, &["4/4"]);
 }
 
+/// True tempo 128 BPM (mapper ground truth from osu! map #163112).
+/// Regression test for the 3:2 alias class: a kick-on-beats + bass-on-
+/// offbeats groove lets the 2/3-rate grid (85.358 = 128 * 2/3) capture
+/// BOTH layers and win the scan, with the true tempo at rank 2. The fix
+/// promotes the higher 3:2-related candidate when its grid shows the
+/// true beats dominating the offbeats.
+#[test]
+fn my_love() {
+    let Some(json) = analyze("My Love.mp3") else {
+        return;
+    };
+    assert_top_bpm(&json, 128.0);
+}
+
+/// True tempo 200 BPM, offset 2397ms (mapper ground truth from osu! map
+/// #320118). Documents a genuine beat/offbeat ambiguity: every local
+/// estimator (broadband slopes, weighted onsets, 150Hz lowpass slopes, in
+/// every analysis window) prefers the grid exactly half a beat away from
+/// the mapper's — the song's strongest transient layer runs on the
+/// offbeat, and the mapper aligned to phrase/vocal context we don't
+/// model. The test pins the grid FAMILY: the reported offset must land
+/// either on the mapper's grid or exactly half a beat off it (the current
+/// behavior), so a future fix that resolves the ambiguity toward the
+/// mapper still passes, while drifting to any third phase fails.
+#[test]
+fn no_title() {
+    let Some(json) = analyze("No title.mp3") else {
+        return;
+    };
+    assert_top_bpm(&json, 200.0);
+
+    let interval = 60.0 / 200.0;
+    let true_mod = 2.397_f64.rem_euclid(interval);
+    let reported = top_offset(&json);
+    let err = |target: f64| {
+        let d = (reported - target).abs();
+        d.min((d - interval).abs())
+    };
+    let on_grid = err(true_mod) <= OFFSET_TOLERANCE_SEC;
+    let half_beat_off =
+        err((true_mod + interval / 2.0).rem_euclid(interval)) <= OFFSET_TOLERANCE_SEC;
+    assert!(
+        on_grid || half_beat_off,
+        "offset {reported}s is neither on the mapper's grid ({true_mod:.4}s mod interval) \
+         nor half a beat off it — drifted to a third phase"
+    );
+}
+
 /// True tempo 174.11 BPM (mapper ground truth from osu! map #74586).
 /// Regression test for the second /3 subharmonic false positive: unlike
 /// Leave the Lights On (decisive scan, blocked by the margin gate), this

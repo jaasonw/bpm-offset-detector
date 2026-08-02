@@ -568,3 +568,51 @@ maps: mean +24.5ms, stddev 2.7ms. Dear You's meter (6/8 vs mapper's
 4/4) is a known deferred limitation of the experimental meter stage —
 its lag-6 autocorrelation wins on this song's accent data. 59 tests
 passing.
+
+### Task 18: 3:2 flip correction (My Love) + beat/offbeat ambiguity documented (Reol)
+
+Second osu-eval batch (17 unique maps) gave BPM 14/17 and exposed two new
+classes, both diagnosed with temporary env-gated instrumentation (since
+removed):
+
+**My Love: the 3:2 alias masquerades as a 3:1 triplet.** True 128 BPM;
+raw scan winner was ~256 (= 85.358 x 3), the /3 pass flipped it to
+85.358 = 128 x 2/3 — and the flip PASSED all the Task 16/17 guards
+because 1/3 of the alias's interval is exactly half a true beat, so the
+true beat's (strong) offbeats play the role of "triplet subdivisions".
+Fix: a promotion pass (apply_ratio_promotion) that, ONLY when the
+current #1 is itself a /3-flip product, promotes the 3:2-related higher
+candidate when its grid's beat phase dominates the offbeat phase
+(My Love: c_beat 8.7 vs c_offbeat 2.3 -> 127.906 at #1). First version
+also ran against raw scan winners and immediately false-promoted
+Passcode (140 -> 210.033) and Hitorigoto (165 -> 247.498): on the higher
+grid a true tempo's backbeat splits kick/snare across beat and offbeat
+phases, and kick-dominance fakes the evidence. Restricted to
+flip-correction; documented in code and README.
+
+**Reol - No title: genuine beat/offbeat ambiguity, documented not
+fixed.** True 200 BPM detected correctly, but the offset landed exactly
+half a beat from the mapper's grid (-120ms wrapped). The slopes
+landscape shows two grids half a beat apart with the offbeat 1.7x
+stronger; weighted onsets agree (10.05 vs 9.56); a 150Hz lowpass slopes
+variant agrees (0.187s); every analysis window (10/20/30/60s) agrees.
+The song's strongest transient layer runs on the offbeat and the mapper
+aligned to phrase/vocal context that local features can't see. The
+regression test pins the grid FAMILY (offset must be on the mapper's
+grid or exactly half a beat off it) so future phrase-aware work can
+resolve it without a test change.
+
+**Harness:** dedupes sets with identical audio content (SipHash of the
+extracted audio; video/no-video variants of the same beatmapset now skip
+as "duplicate audio").
+
+**Offset bias refined:** the +26ms "constant" varies with transient
+sharpness — Silhouette (rock, sharp drums) +2.4ms vs pop cluster
++23..+27ms — confirming the rise-time mechanism and weakening any flat
+correction rule. README now documents the +2..+27ms band instead of a
+single number.
+
+Validated: osu-eval 14/16 within 0.5 BPM (remaining failures are the two
+deferred hard classes: Highscore octave 110/220, Stronger Than You
+sparse ballad 98/226), all prior regressions stayed fixed, 62 tests
+passing.

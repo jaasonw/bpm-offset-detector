@@ -62,18 +62,28 @@ Features beyond the reference C++ implementation:
   promoted — fixes dense secondary percussion layers (e.g. a loop at 4
   hits per 3 beats, detected as 241 BPM) outscoring the true tempo
   (180 BPM) under the scan's accent-blind voting.
+- **3:2 flip correction**: a 2/3-rate alias (e.g. 85.358 for a true 128
+  BPM) can pass the /3 subharmonic checks because 1/3 of its interval is
+  exactly half a true beat, making the true beat's offbeats look like
+  triplet subdivisions. When such a flip produced the current #1, a
+  promotion pass replaces it with the 3:2-related higher candidate if
+  that grid's beat phase dominates its offbeat phase. Restricted to
+  flip-correction because the same evidence is unsafe against raw scan
+  winners (backbeat kick/snare splits fake it).
 - **Waveform-based offset phase**: the beat offset is chosen by scanning
   the beat grid against raw waveform leading-edge energy rather than by
   voting detected onsets, so the offset stays correct even when onset
   detection is sparse (dense/quiet mixes where few onsets survive
-  peak-picking). **Known systematic bias**: reported offsets run a
-  consistent ~+26ms late vs human mapper ground truth (mean across 8
-  real songs, range +21 to +30ms; both the onset and slope estimators
-  center on a transient's full rise while humans mark the perceived
-  attack). Practical rule for comparing against osu!-style offsets:
-  `true offset ≈ reported − 26ms ± 5ms`. This is documented rather than
-  auto-corrected because the synthetic reference fixtures (sharp clicks
-  with zero rise time) pin the current calibration.
+  peak-picking).
+- **Known offset limitations**: (a) systematic bias — reported offsets run
+  late vs human mapper ground truth, varying with transient sharpness
+  (≈ +2ms for sharp rock drums to ≈ +27ms for soft pop transients; both
+  estimators center on a transient's full rise while humans mark the
+  perceived attack); (b) beat/offbeat ambiguity — when a song's strongest
+  transient layer runs on the offbeat, every local estimator (broadband
+  slopes, weighted onsets, low-band slopes) locks the offbeat grid, half
+  a beat away from the mapper's choice (observed on Reol - No title);
+  resolving it needs phrase-level context we don't model.
 - **Experimental time-signature estimation**: each result includes a
   `time_signature` estimate (2/4, 3/4, 4/4, 6/8, 12/8) with a confidence
   score, derived from per-beat accent periodicity (mean-centered
@@ -121,9 +131,11 @@ point: BPM = 60000/beatLength, offset = time in ms), analyzes the bundled
 audio, and writes a per-map CSV row (true vs detected BPM/offset/meter,
 signed offset error wrapped to ±half a beat) plus summary statistics on
 stderr. Maps with variable BPM (multiple uninherited timing points) are
-skipped and logged. The offset-error distribution across many maps is how
-the systematic offset bias gets calibrated with statistical confidence
-instead of 3 data points.
+skipped and logged, as are sets whose audio content duplicates an
+already-analyzed set (e.g. video and no-video variants of the same map).
+The offset-error distribution across many maps is how the systematic
+offset bias gets calibrated with statistical confidence instead of 3
+data points.
 
 Report columns (CSV and `--table`; the table view drops `audio` and merges
 the two meter columns into `true→detected`):

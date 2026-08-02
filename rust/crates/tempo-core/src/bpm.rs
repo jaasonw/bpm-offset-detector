@@ -80,6 +80,19 @@ pub(crate) fn calculate_bpm_with_context(
             apply_subharmonic_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
         if !triplet_feel {
             apply_ratio_demotion(&mut tempo, &mut gapdata, onsets, sample_rate);
+        } else {
+            // Flip correction only: a 3:2 alias masquerades as a 3:1
+            // triplet (1/3 of the alias's interval is exactly half a true
+            // beat, so the true beat's offbeats pass the triplet checks),
+            // and the promotion pass's beat-vs-offbeat dominance analysis
+            // undoes such a wrong flip (My Love: 256 -> 85.358 -> 128).
+            // It must NOT overthrow a raw scan winner: on the higher grid
+            // a true tempo's backbeat splits kick/snare across the two
+            // phases, and kick-dominance fakes the evidence (regressions:
+            // Passcode 140 -> 210, Hitorigoto 165 -> 247.5).
+            if apply_ratio_promotion(&mut tempo, &mut gapdata, onsets, sample_rate) {
+                triplet_feel = false;
+            }
         }
     }
 
@@ -199,6 +212,72 @@ fn apply_subharmonic_preference(
     } else {
         false
     }
+}
+
+/// Small-integer ratios (p:q, p > q) between the scan winner and a
+/// HIGHER-ranked... see apply_ratio_promotion.
+const PROMOTION_RATIOS: [(usize, usize); 1] = [(3, 2)];
+
+/// The mirror of `apply_ratio_demotion`: promotes a higher-BPM candidate
+/// over the current #1 when they sit at a 3:2 ratio and the higher grid
+/// proves to be the real beat. ONLY run as correction of a /3
+/// subharmonic flip (i.e. when the current #1 is itself a flip product):
+/// a 3:2 alias masquerades as a 3:1 triplet because 1/3 of its interval
+/// is exactly half a true beat, so the true beat's offbeats pass the
+/// triplet-subdivision checks (My Love: raw scan 256, flipped to 85.358,
+/// promoted to the true 128). Overthrowing a RAW scan winner with this
+/// evidence is unsafe: a true tempo's backbeat splits kick/snare across
+/// the higher grid's beat and offbeat phases, and kick-dominance fakes
+/// "beat dominance" (observed regressions: Passcode 140 -> 210.033,
+/// Hitorigoto 165 -> 247.498).
+///
+/// The structural guard against promoting over a TRUE slow tempo: a
+/// genuine 85 BPM song's beats land on the 128 grid's beat AND offbeat
+/// phases alternately (its interval is exactly 1.5x), so its beat phase
+/// can never dominate the offbeat phase — while a true 128 with a strong
+/// downbeat layer can. Conditions mirror the other passes: beat phase
+/// dominance over the offbeat phase, substantial weighted support, and
+/// the same scan-uncertainty gate. Returns true when a promotion fired.
+fn apply_ratio_promotion(
+    tempo: &mut Vec<TempoResult>,
+    gapdata: &mut GapData,
+    onsets: &[Onset],
+    sample_rate: u32,
+) -> bool {
+    if tempo.len() < 2 || tempo[0].fitness / tempo[1].fitness >= SCAN_UNCERTAINTY_MARGIN {
+        return false;
+    }
+
+    let low_bpm = tempo[0].bpm;
+    let low_interval = sample_rate as f64 * 60.0 / low_bpm;
+
+    for &(p, q) in &PROMOTION_RATIOS {
+        let target = p as f64 / q as f64;
+        for k in 1..tempo.len() {
+            let high_bpm = tempo[k].bpm;
+            if (high_bpm / low_bpm - target).abs() / target > RATIO_TOLERANCE {
+                continue;
+            }
+
+            let high_interval = sample_rate as f64 * 60.0 / high_bpm;
+            let w_low = gapdata.confidence_for_bpm_weighted(onsets, low_interval);
+            let w_high = gapdata.confidence_for_bpm_weighted(onsets, high_interval);
+
+            let (interval, beat_pos) = gapdata.weighted_best_phase(onsets, high_interval);
+            let c_beat = gapdata.gap_confidence(beat_pos, interval);
+            let c_offbeat = gapdata.gap_confidence((beat_pos + interval / 2) % interval, interval);
+
+            let beat_dominant = c_beat >= BEAT_DOMINANCE_RATIO * c_offbeat;
+            let substantial_support = w_high >= FUNDAMENTAL_SUPPORT_RATIO * w_low;
+
+            if beat_dominant && substantial_support {
+                let promoted = tempo.remove(k);
+                tempo.insert(0, promoted);
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Small-integer ratios (p:q, p > q) between the scan winner and another

@@ -218,6 +218,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bpm_correct = 0usize;
     let mut offset_errors_ms: Vec<f64> = Vec::new();
     let mut skip_reasons: Vec<(String, String)> = Vec::new();
+    // Audio-content hashes already analyzed, to dedupe sets downloaded
+    // twice (e.g. video and no-video variants of the same beatmapset).
+    let mut seen_audio: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
 
     for osz in &osz_files {
         let osz_name = osz
@@ -241,7 +244,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         for timing in &timings {
-            let result = analyze(osz, timing, &temp_dir, &opts, &cli);
+            let audio_path = match extract_audio(osz, &timing.audio_filename, &temp_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    let msg = format!("audio extraction failed: {e}");
+                    rows.push(Row::skipped(&osz_name, &msg));
+                    skip_reasons.push((osz_name.clone(), msg));
+                    continue;
+                }
+            };
+            let hash = hash_file(&audio_path);
+            if let Some(first) = seen_audio.get(&hash) {
+                let msg = format!("duplicate audio of {first}");
+                rows.push(Row::skipped(&osz_name, &msg));
+                skip_reasons.push((osz_name.clone(), msg));
+                continue;
+            }
+            seen_audio.insert(hash, osz_name.clone());
+
+            let result = analyze(&audio_path, timing, &opts, &cli, &osz_name);
             match result {
                 Ok((row, offset_err, bpm_ok)) => {
                     if bpm_ok {
@@ -318,26 +339,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Hashes a file's contents for duplicate-audio detection (SipHash via
+/// DefaultHasher — non-cryptographic, collision risk is negligible at
+/// this scale).
+fn hash_file(path: &Path) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if let Ok(bytes) = std::fs::read(path) {
+        hasher.write(&bytes);
+    }
+    hasher.finish()
+}
+
 /// Analyzes one map's audio against its timing ground truth. Returns the
 /// CSV row, the signed offset error in ms (only when the BPM matched), and
 /// whether the BPM matched.
 fn analyze(
-    osz: &Path,
+    audio_path: &Path,
     timing: &tempo_cli::osu::OsuTiming,
-    temp_dir: &Path,
     opts: &DetectOptions,
     cli: &Cli,
+    osz_name: &str,
 ) -> Result<(Row, Option<f64>, bool), String> {
-    let osz_name = osz
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("?")
-        .to_string();
-
-    let audio_path = extract_audio(osz, &timing.audio_filename, temp_dir)
-        .map_err(|e| format!("audio extraction failed: {e}"))?;
     let (samples, sample_rate) =
-        decode_audio_file(&audio_path).map_err(|e| format!("decode failed: {e}"))?;
+        decode_audio_file(audio_path).map_err(|e| format!("decode failed: {e}"))?;
 
     // Slice to [start, start + duration) like the main CLI.
     let start_frame = ((cli.start.max(0.0)) * sample_rate as f64) as usize;
@@ -373,7 +398,7 @@ fn analyze(
     };
 
     let row = Row {
-        osz: osz_name,
+        osz: osz_name.to_string(),
         audio: timing.audio_filename.clone(),
         status: "ok".to_string(),
         true_bpm: fmt_f(timing.bpm, 3),
