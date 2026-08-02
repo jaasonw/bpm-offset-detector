@@ -29,7 +29,15 @@ pub(crate) fn decode_audio_file(
     let probed = symphonia::default::get_probe().format(
         &hint,
         mss,
-        &FormatOptions::default(),
+        &FormatOptions {
+            // Trim encoder delay/padding (e.g. from LAME's Xing/Info header)
+            // so sample positions line up with the original source audio
+            // rather than the lossy file's padded timeline. Without this,
+            // detected beat offsets on MP3s are shifted late by the encoder
+            // delay (typically 25-50ms).
+            enable_gapless: true,
+            ..Default::default()
+        },
         &MetadataOptions::default(),
     )?;
     let mut format = probed.format;
