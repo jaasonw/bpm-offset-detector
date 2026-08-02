@@ -97,7 +97,11 @@ Ported from `FindTempo_standalone.cpp`, cross-checked against
 `doc/syslab-version/paper.tex` §Methods/§Implementation.
 
 Constants (overridable via CLI flags where noted):
-- `MIN_BPM = 89.0`, `MAX_BPM = 205.0` (flags: `--min-bpm`, `--max-bpm`)
+- `MIN_BPM = 40.0`, `MAX_BPM = 260.0` (flags: `--min-bpm`, `--max-bpm`).
+  *Amended post-implementation from the reference's 89–205: songs slower
+  than 89 BPM were otherwise reported as their in-range octave multiples
+  (e.g. 68 BPM detected as 136). The wider range costs ~3.3× runtime, which
+  is acceptable.*
 - `INTERVAL_DELTA = 10`
 - `INTERVAL_DOWNSAMPLE = 3`
 - Onset detection window = 1024 samples, hop = 256 samples
@@ -173,7 +177,7 @@ not decided in advance.
 ## CLI
 
 ```
-tempo <file> [--min-bpm 89] [--max-bpm 205] [--start 0] [--duration 60] [--json]
+tempo <file> [--min-bpm 40] [--max-bpm 260] [--start 0] [--duration 60] [--json]
 tempo batch <folder> --out results.csv [--json]
 ```
 

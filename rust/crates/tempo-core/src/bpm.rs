@@ -172,6 +172,27 @@ mod tests {
     }
 
     #[test]
+    fn detects_slow_bpm_below_the_reference_range() {
+        // 68 BPM is below the reference implementation's 89 BPM floor, so
+        // the reference (and this crate before the defaults were widened)
+        // would report its in-range octave multiples (136, 204) instead of
+        // the true tempo. The widened default range must find 68 directly.
+        let sample_rate = 44100u32;
+        let true_bpm = 68.0;
+        let interval = (sample_rate as f64 * 60.0 / true_bpm).round() as usize;
+        let onsets = click_train(interval, 60);
+        let opts = DetectOptions::default();
+
+        let results = calculate_bpm(&onsets, sample_rate, &opts);
+
+        assert!(
+            (results[0].bpm - true_bpm).abs() < 0.5,
+            "top candidate bpm = {}, expected close to {true_bpm}",
+            results[0].bpm
+        );
+    }
+
+    #[test]
     fn remove_duplicates_collapses_octave_and_near_duplicates() {
         let mut tempo = vec![
             TempoResult {

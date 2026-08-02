@@ -54,17 +54,21 @@ pub struct TempoResult {
 /// Options controlling tempo detection.
 #[derive(Debug, Clone, Copy)]
 pub struct DetectOptions {
-    /// Slowest BPM considered. Reference default: 89.0.
+    /// Slowest BPM considered. Default: 40.0 (widened from the reference
+    /// implementation's 89.0 — slower songs otherwise get reported as their
+    /// in-range octave multiples, e.g. a 68 BPM song detected as 136).
     pub min_bpm: f64,
-    /// Fastest BPM considered. Reference default: 205.0.
+    /// Fastest BPM considered. Default: 260.0 (reference used 205.0; 260
+    /// keeps the shortest beat interval far above the 2048-sample analysis
+    /// window, so there's no algorithmic constraint anywhere near this).
     pub max_bpm: f64,
 }
 
 impl Default for DetectOptions {
     fn default() -> Self {
         DetectOptions {
-            min_bpm: 89.0,
-            max_bpm: 205.0,
+            min_bpm: 40.0,
+            max_bpm: 260.0,
         }
     }
 }

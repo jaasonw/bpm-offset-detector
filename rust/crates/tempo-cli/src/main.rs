@@ -33,10 +33,10 @@ struct Cli {
 #[derive(Parser, Clone)]
 struct SharedOptions {
     /// Slowest BPM to consider.
-    #[arg(long, default_value_t = 89.0)]
+    #[arg(long, default_value_t = 40.0)]
     min_bpm: f64,
     /// Fastest BPM to consider.
-    #[arg(long, default_value_t = 205.0)]
+    #[arg(long, default_value_t = 260.0)]
     max_bpm: f64,
     /// Start offset into the audio, in seconds.
     #[arg(long, default_value_t = 0.0)]

@@ -38,7 +38,7 @@ Windows). No system libraries are required on any platform.
 ## Usage
 
 ```sh
-tempo-cli <file> [--min-bpm 89] [--max-bpm 205] [--start 0] [--duration 60] [--json]
+tempo-cli <file> [--min-bpm 40] [--max-bpm 260] [--start 0] [--duration 60] [--json]
 tempo-cli batch <folder> --out results.csv [--json]
 ```
 

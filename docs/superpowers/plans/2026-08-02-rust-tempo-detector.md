@@ -25,7 +25,10 @@ full design rationale.
 
 ## Global Constraints
 
-- BPM range defaults: 89–205 (overridable via `--min-bpm`/`--max-bpm`).
+- BPM range defaults: 40–260 (overridable via `--min-bpm`/`--max-bpm`).
+  *Amended post-implementation from the original 89–205: slower songs were
+  reported as octave multiples (68 BPM detected as 136); see the "detects
+  68 BPM with default options" regression test in `bpm.rs`.*
 - `tempo-core` must have zero file I/O or threading dependencies (WASM
   compatibility requirement from the design doc).
 - New code is MIT-licensed (see `rust/LICENSE`).
