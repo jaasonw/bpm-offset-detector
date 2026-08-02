@@ -15,9 +15,7 @@ use symphonia::core::probe::Hint;
 
 /// Decodes the audio file at `path` to mono `f32` samples (channels
 /// averaged) and its sample rate.
-pub(crate) fn decode_audio_file(
-    path: &Path,
-) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
+pub fn decode_audio_file(path: &Path) -> Result<(Vec<f32>, u32), Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 

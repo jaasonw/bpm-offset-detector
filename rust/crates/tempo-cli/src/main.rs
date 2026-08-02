@@ -2,8 +2,6 @@
 //! audio files with `symphonia` (pure Rust, no system libraries) and runs
 //! the tempo/offset detection pipeline.
 
-mod decode;
-
 use std::fs;
 use std::path::PathBuf;
 
@@ -11,7 +9,7 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use tempo_core::{detect_with_onsets, estimate_meter, DetectOptions, MeterEstimate, TempoResult};
 
-use decode::decode_audio_file;
+use tempo_cli::decode::decode_audio_file;
 
 /// File extensions `symphonia` (as configured in this crate's Cargo.toml)
 /// can decode; used to filter directory entries in `batch` mode.

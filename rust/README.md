@@ -97,6 +97,27 @@ runs the compiled CLI against real tracks with user-confirmed ground
 truth. The real-song fixtures are copyrighted and not committed; those
 tests skip automatically when the files are absent (e.g. on CI).
 
+## Evaluating against osu! maps (local tool)
+
+`osu-eval` is a second binary that compares the detector against human
+mapper ground truth from osu! beatmapsets. Download `.osz` files from
+[osu.ppy.sh](https://osu.ppy.sh/beatmapsets) and drop them into
+`rust/osu-maps/` (gitignored — `.osz` bundles copyrighted audio, so it
+stays local-only, exactly like the MP3 fixtures):
+
+```sh
+cargo run --release --bin osu_eval -- osu-maps --out report.csv
+```
+
+For each `.osz` it extracts the mapper's timing (first uninherited timing
+point: BPM = 60000/beatLength, offset = time in ms), analyzes the bundled
+audio, and writes a per-map CSV row (true vs detected BPM/offset/meter,
+signed offset error wrapped to ±half a beat) plus summary statistics on
+stderr. Maps with variable BPM (multiple uninherited timing points) are
+skipped and logged. The offset-error distribution across many maps is how
+the systematic offset bias gets calibrated with statistical confidence
+instead of 3 data points.
+
 ## Notes on fidelity to the reference implementation
 
 Every part of the algorithm is a faithful (if idiomatically-Rust) port of
