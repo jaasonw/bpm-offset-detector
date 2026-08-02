@@ -25,11 +25,12 @@ pub use polyfit::{polyfit_cubic, polyval};
 pub struct Onset {
     /// Position of the onset, in samples from the start of the audio.
     pub pos: usize,
-    /// Strength/confidence of the onset. The reference algorithm found that
-    /// giving every onset a constant strength of `1.0` outperformed
-    /// weighting by measured onset strength, so `find_onsets` always
-    /// produces `strength: 1.0`; the field remains generic so tests can
-    /// exercise weighted onsets directly.
+    /// Relative accent/salience of the onset (mean 1.0 across a detection
+    /// run, from ODF peak height). The BPM scan deliberately ignores this
+    /// and votes with constant weight (the paper found constant strengths
+    /// more accurate for the scan); strengths are used only by the
+    /// subharmonic preference pass and meter estimation, where accent
+    /// structure is the relevant signal.
     pub strength: f64,
 }
 
@@ -62,6 +63,15 @@ pub struct DetectOptions {
     /// keeps the shortest beat interval far above the 2048-sample analysis
     /// window, so there's no algorithmic constraint anywhere near this).
     pub max_bpm: f64,
+    /// When true (default), a post-processing pass re-labels a winning
+    /// candidate as its 1/3 subharmonic when the evidence supports it
+    /// (accented beat phase dominates the subharmonic's phase clusters AND
+    /// the 1/3 and 2/3 subdivision phases contain real onsets). This fixes
+    /// triplet-feel songs being reported at 3x their true tempo. Only /3 is
+    /// considered — /2 is deliberately excluded because even/odd backbeat
+    /// accenting makes half-tempo intrinsically competitive on any
+    /// even-tempo song, so a /2 rule cannot avoid false tempo-halving.
+    pub subharmonic_preference: bool,
 }
 
 impl Default for DetectOptions {
@@ -69,6 +79,7 @@ impl Default for DetectOptions {
         DetectOptions {
             min_bpm: 40.0,
             max_bpm: 260.0,
+            subharmonic_preference: true,
         }
     }
 }

@@ -102,9 +102,10 @@ impl GapData {
 
     /// Confidence that `interval` (in full-resolution samples) is the beat
     /// interval, using integer modulo wrapping and `self.downsample`-reduced
-    /// histogram resolution. Onsets are weighted by their `strength`. This
-    /// is the coarse/refine-scan variant (`GetConfidenceForInterval` in the
-    /// reference).
+    /// histogram resolution. Every onset votes with a constant weight of
+    /// `1.0` (per the paper's finding that constant strengths beat measured
+    /// onset strengths for the BPM scan). This is the coarse/refine-scan
+    /// variant (`GetConfidenceForInterval` in the reference).
     pub(crate) fn confidence_for_interval(&mut self, onsets: &[Onset], interval: usize) -> f64 {
         let reduced_interval = interval >> self.downsample;
         self.histogram[..reduced_interval].fill(0.0);
@@ -113,7 +114,7 @@ impl GapData {
         for onset in onsets {
             let pos = (onset.pos % interval) >> self.downsample;
             wrapped_pos.push(pos);
-            self.histogram[pos] += onset.strength;
+            self.histogram[pos] += 1.0;
         }
 
         let mut highest = 0.0f64;
@@ -131,24 +132,36 @@ impl GapData {
     /// Confidence that a candidate BPM (expressed as a fractional sample
     /// interval `interval_f = sample_rate * 60 / bpm`) is the beat interval,
     /// using fractional (`rem_euclid`) wrapping for sub-sample onset
-    /// placement and full histogram resolution. Onsets are weighted by
-    /// their `strength`. Requires `downsample == 0` (`GetConfidenceForBPM`
-    /// in the reference).
+    /// placement and full histogram resolution. Every onset votes with a
+    /// constant weight of `1.0` (see `confidence_for_interval`). Requires
+    /// `downsample == 0` (`GetConfidenceForBPM` in the reference).
     pub(crate) fn confidence_for_bpm(&mut self, onsets: &[Onset], interval_f: f64) -> f64 {
         debug_assert_eq!(
             self.downsample, 0,
             "confidence_for_bpm requires downsample = 0"
         );
-        let interval = interval_f.round().max(1.0) as usize;
-        self.histogram[..interval].fill(0.0);
+        self.confidence_for_bpm_with_weights(onsets, interval_f, false)
+    }
 
-        let mut wrapped_pos = Vec::with_capacity(onsets.len());
-        for onset in onsets {
-            let pos = (onset.pos as f64).rem_euclid(interval_f) as usize;
-            let pos = pos.min(interval - 1);
-            wrapped_pos.push(pos);
-            self.histogram[pos] += onset.strength;
-        }
+    /// Like `confidence_for_bpm`, but onsets vote with their `strength`
+    /// (accent) instead of a constant `1.0`. Used only by the subharmonic
+    /// preference pass, where accent structure is the signal that
+    /// distinguishes a true fundamental from its triplet harmonic.
+    pub(crate) fn confidence_for_bpm_weighted(&mut self, onsets: &[Onset], interval_f: f64) -> f64 {
+        debug_assert_eq!(
+            self.downsample, 0,
+            "confidence_for_bpm_weighted requires downsample = 0"
+        );
+        self.confidence_for_bpm_with_weights(onsets, interval_f, true)
+    }
+
+    fn confidence_for_bpm_with_weights(
+        &mut self,
+        onsets: &[Onset],
+        interval_f: f64,
+        weighted: bool,
+    ) -> f64 {
+        let (interval, wrapped_pos) = self.fill_histogram(onsets, interval_f, weighted);
 
         let mut highest = 0.0f64;
         for &pos in &wrapped_pos {
@@ -160,6 +173,58 @@ impl GapData {
             }
         }
         highest
+    }
+
+    /// Fills `self.histogram` with onsets wrapped by the fractional
+    /// `interval_f`, each voting `strength` (if `weighted`) or `1.0`.
+    /// Returns the integer interval and the wrapped positions.
+    fn fill_histogram(
+        &mut self,
+        onsets: &[Onset],
+        interval_f: f64,
+        weighted: bool,
+    ) -> (usize, Vec<usize>) {
+        let interval = interval_f.round().max(1.0) as usize;
+        self.histogram[..interval].fill(0.0);
+
+        let mut wrapped_pos = Vec::with_capacity(onsets.len());
+        for onset in onsets {
+            let pos = (onset.pos as f64).rem_euclid(interval_f) as usize;
+            let pos = pos.min(interval - 1);
+            wrapped_pos.push(pos);
+            self.histogram[pos] += if weighted { onset.strength } else { 1.0 };
+        }
+        (interval, wrapped_pos)
+    }
+
+    /// Profiles the strength-weighted wrapped-onset histogram for a
+    /// candidate `interval_f`: returns the integer interval and the
+    /// best-supported phase position (by raw `gap_confidence`, without the
+    /// offbeat term). Used by the subharmonic preference pass to locate a
+    /// candidate fundamental's beat phase and compare phase supports. The
+    /// weighted histogram remains in `self.histogram` afterwards for
+    /// follow-up `gap_confidence` queries.
+    pub(crate) fn weighted_best_phase(
+        &mut self,
+        onsets: &[Onset],
+        interval_f: f64,
+    ) -> (usize, usize) {
+        debug_assert_eq!(
+            self.downsample, 0,
+            "weighted_best_phase requires downsample = 0"
+        );
+        let (interval, wrapped_pos) = self.fill_histogram(onsets, interval_f, true);
+
+        let mut best_pos = 0;
+        let mut best_conf = 0.0f64;
+        for &pos in &wrapped_pos {
+            let c = self.gap_confidence(pos, interval);
+            if c > best_conf {
+                best_conf = c;
+                best_pos = pos;
+            }
+        }
+        (interval, best_pos)
     }
 }
 

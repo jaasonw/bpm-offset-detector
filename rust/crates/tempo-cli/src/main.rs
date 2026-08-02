@@ -47,6 +47,10 @@ struct SharedOptions {
     /// Print results as JSON instead of human-readable text.
     #[arg(long)]
     json: bool,
+    /// Disable the subharmonic preference pass (revert to raw reference
+    /// behavior, which may report triplet-feel songs at 3x their tempo).
+    #[arg(long)]
+    no_subharmonic_preference: bool,
 }
 
 #[derive(Subcommand)]
@@ -109,6 +113,7 @@ fn detect_options_from(shared: &SharedOptions) -> DetectOptions {
     DetectOptions {
         min_bpm: shared.min_bpm,
         max_bpm: shared.max_bpm,
+        subharmonic_preference: !shared.no_subharmonic_preference,
     }
 }
 

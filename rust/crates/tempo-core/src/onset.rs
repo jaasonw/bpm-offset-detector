@@ -35,7 +35,23 @@ const ANALYSIS_DELAY_SAMPLES: f64 = 600.0;
 
 pub(crate) fn find_onsets(samples: &[f32], sample_rate: u32) -> Vec<Onset> {
     let odf = onset_detection_function(samples);
-    pick_peaks(&odf, sample_rate)
+    let mut onsets = pick_peaks(&odf, sample_rate);
+
+    // Normalize ODF peak heights to a mean strength of 1.0, so strengths
+    // express relative accent (this onset vs typical onsets in the same
+    // audio) rather than an absolute spectral magnitude. The main pipeline
+    // deliberately uses constant weights (see gapdata.rs); strengths exist
+    // for the subharmonic preference pass and meter estimation.
+    if !onsets.is_empty() {
+        let mean = onsets.iter().map(|o| o.strength).sum::<f64>() / onsets.len() as f64;
+        if mean > 0.0 {
+            for o in onsets.iter_mut() {
+                o.strength /= mean;
+            }
+        }
+    }
+
+    onsets
 }
 
 /// Computes the complex-domain onset detection function, one value per hop.
@@ -158,7 +174,9 @@ fn pick_peaks(odf: &[f64], sample_rate: u32) -> Vec<Onset> {
         if is_local_max && clears_threshold && clears_min_ioi {
             let frac = parabolic_offset(odf[n - 1], odf[n], odf[n + 1]);
             let frame_pos = (n as f64 + frac) * HOP_SIZE as f64 + ANALYSIS_DELAY_SAMPLES;
-            onsets.push(Onset::new(frame_pos.max(0.0) as usize, 1.0));
+            // Strength = ODF peak height (normalized later by find_onsets);
+            // it approximates the onset's accent/perceptual salience.
+            onsets.push(Onset::new(frame_pos.max(0.0) as usize, odf[n]));
             last_onset_frame = Some(n);
         }
     }
