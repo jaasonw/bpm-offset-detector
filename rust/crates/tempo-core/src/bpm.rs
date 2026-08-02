@@ -78,6 +78,9 @@ pub(crate) fn calculate_bpm_with_context(
     if opts.subharmonic_preference {
         triplet_feel =
             apply_subharmonic_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
+        if !triplet_feel {
+            apply_ratio_demotion(&mut tempo, &mut gapdata, onsets, sample_rate);
+        }
     }
 
     (tempo, triplet_feel)
@@ -186,6 +189,91 @@ fn apply_subharmonic_preference(
         true
     } else {
         false
+    }
+}
+
+/// Small-integer ratios (p:q, p > q) between the scan winner and another
+/// top candidate for which the winner may be demoted in favor of the
+/// lower-rated candidate when accent evidence identifies the lower one as
+/// the fundamental. 2:1 is excluded (octaves are collapsed by
+/// `remove_duplicates`, and half-tempo demotion is unsafe on backbeat
+/// music); 3:1 is the subharmonic pass above; 3:2 is excluded because its
+/// 2-phase accent check is the same backbeat trap as half-tempo. Only
+/// 4:3 is enabled — the one ratio with observed real-world evidence (a
+/// percussion layer running 4 hits per 3 beats outscoring the true
+/// 180 BPM beat as 241.291).
+const DEMOTION_RATIOS: [(usize, usize); 1] = [(4, 3)];
+
+/// How close a candidate pair's BPM ratio must be to a small-integer
+/// ratio to trigger the accent check (1%: loose enough for refinement
+/// error, tight enough to never confuse 4:3 with 5:4, 6.7% away).
+const RATIO_TOLERANCE: f64 = 0.01;
+
+/// Demotes the scan winner when a lower-ranked top candidate sits at a
+/// small-integer ratio below it (see `DEMOTION_RATIOS`) and the accent
+/// evidence says the lower one is the true beat: on the lower candidate's
+/// grid, the beat phase must dominate the q subdivision phases (which the
+/// competing layer's onsets spread across), and the lower candidate's
+/// weighted confidence must be substantial.
+///
+/// Unlike the subharmonic pass there is no subdivision-evidence
+/// condition: that pass synthesizes a candidate the scan never found, so
+/// it must prove the subdivision layer is real — here BOTH candidates
+/// come from the scan, so the competing layer's existence is already
+/// established by its ranking. The guard against demoting a genuinely
+/// correct fast tempo is structural instead: a true p:q-ratio tempo's
+/// margin over its alias is inherently large (a real 241 BPM song scores
+/// ~2.7x over its 180 alias, whose grid splits the onsets into q weak
+/// clusters), so the same uncertainty gate as the subharmonic pass
+/// suffices — honeycolor's 241-vs-180 margin was 1.04, pure noise.
+///
+/// Unlike that pass, the fundamental already exists in the candidate
+/// list, so it is promoted to #1 unchanged (its fitness stays below the
+/// demoted winner's — position, not fitness, encodes the decision,
+/// exactly as documented for the subharmonic flip).
+fn apply_ratio_demotion(
+    tempo: &mut Vec<TempoResult>,
+    gapdata: &mut GapData,
+    onsets: &[Onset],
+    sample_rate: u32,
+) {
+    if tempo.len() < 2 || tempo[0].fitness / tempo[1].fitness >= SCAN_UNCERTAINTY_MARGIN {
+        return;
+    }
+
+    let high_bpm = tempo[0].bpm;
+    let high_interval = sample_rate as f64 * 60.0 / high_bpm;
+
+    for &(p, q) in &DEMOTION_RATIOS {
+        let target = p as f64 / q as f64;
+        for k in 1..tempo.len() {
+            let low_bpm = tempo[k].bpm;
+            if (high_bpm / low_bpm - target).abs() / target > RATIO_TOLERANCE {
+                continue;
+            }
+
+            let low_interval = sample_rate as f64 * 60.0 / low_bpm;
+            let w_high = gapdata.confidence_for_bpm_weighted(onsets, high_interval);
+            let w_low = gapdata.confidence_for_bpm_weighted(onsets, low_interval);
+
+            // Phase supports on the fundamental candidate's grid: the beat
+            // phase vs the q-1 subdivision phases the competing layer's
+            // onsets alias into.
+            let (interval, beat_pos) = gapdata.weighted_best_phase(onsets, low_interval);
+            let c_beat = gapdata.gap_confidence(beat_pos, interval);
+            let c_sub_max = (1..q)
+                .map(|i| gapdata.gap_confidence((beat_pos + interval * i / q) % interval, interval))
+                .fold(0.0f64, f64::max);
+
+            let beat_dominant = c_beat >= BEAT_DOMINANCE_RATIO * c_sub_max;
+            let substantial_support = w_low >= FUNDAMENTAL_SUPPORT_RATIO * w_high;
+
+            if beat_dominant && substantial_support {
+                let promoted = tempo.remove(k);
+                tempo.insert(0, promoted);
+                return;
+            }
+        }
     }
 }
 

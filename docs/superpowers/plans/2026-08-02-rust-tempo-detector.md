@@ -399,6 +399,12 @@ Validated on the user's MP3: reports 12/8 at confidence 1.00 — consistent
 with the triplet feel that caused the original 3x misdetection. Uniform
 click trains correctly report near-zero confidence.
 
+(Correction, added in Task 16: the user later clarified that "boy for the
+weekend" is confirmed NOT 4/4 but its true meter is unknown — the "12/8"
+above was the detector's biased output at the time, not ground truth.
+After Task 15's fix the song reports "unknown", which is the honest
+answer given its beat-level accent data.)
+
 ### Task 15: Fix meter estimation's large-grouping bias (12/8 on every song)
 
 Real-world testing ("Call Me Maybe", a true 4/4 song, reported 12/8 @
@@ -432,3 +438,76 @@ Validated: Call Me Maybe -> "unknown" @ 0.21 (was 12/8 @ 0.64; its
 beat-level accents genuinely lack bar structure — lag-4 correlation is
 negative), boy for the weekend -> "unknown" @ 0.00, all synthetic
 fixtures correct including noisy variants.
+
+### Task 16: Real-song regression suite + two ranking bugs + waveform offset phase
+
+Prompted by two new user-supplied ground truths — honeycolor.mp3 (180
+BPM, offset 726ms, 4/4) and Leave the Lights On.mp3 (170 BPM, offset
+48ms, 4/4) — plus a clarification that boy for the weekend is confirmed
+NOT 4/4 but its true meter is unknown.
+
+**Real-song e2e suite** (`crates/tempo-cli/tests/real_songs.rs`): runs the
+compiled CLI with `--json` against the 4 real tracks and asserts
+user-confirmed ground truth (BPM +-0.5; offset +-40ms compared modulo the
+beat interval, since the detector reports grid phase; meter assertions
+fail only on a specific WRONG answer — abstention always passes, since
+the experimental meter feature honestly declines on weak accent
+structure). Fixtures are copyrighted and gitignored; tests skip when
+absent so CI stays green.
+
+**Bug 1: subharmonic preference demoted a correct fast tempo.** Leave the
+Lights On won its scan decisively (170.000 @ 6.21 vs 3.54) but the /3
+pass thirded it to 56.667: incidental swing accents populate one triplet
+subdivision phase on almost any groove, so the accent conditions alone
+couldn't distinguish "3x harmonic lock" from "correct fast tempo with
+swing". Diagnosis (env-gated instrumentation, since removed) compared the
+two flip cases: boy-for-the-weekend's scan margin was 1.24 (uncertain —
+the scan was arguing between 3x and 2x of 68) vs 1.76 (decisive). Fix:
+the pass may only override a scan whose top-2 margin is below 1.5 — a
+genuine 3x lock is structurally capped at 4/3 because its half-tempo
+alias always scores 3/4 (beat cluster N/2 + offbeat bonus N/4). A
+full-precision weighted-parity alternative was tried first and rejected
+empirically (0.587 vs 0.529 — no separation; the fixed-window bias
+inflates the harmonic's score at full precision for both songs).
+
+**Bug 2: true 180 BPM lost to a 4:3-ratio percussion layer.** honeycolor
+reported 241.291 (= 180 x 4/3) at #1, 180.098 at #2, margin 1.04.
+Generalized the preference architecture into `apply_ratio_demotion`: for
+top candidates at a small-integer ratio (only 4:3 enabled — the one ratio
+with real-world evidence; 2:1 handled by dedup, 3:1 by the subharmonic
+pass, 3:2 excluded as the same backbeat trap as half-tempo), demote the
+winner when the lower candidate's grid shows beat-phase dominance and
+substantial weighted support, gated by the same scan-uncertainty margin.
+No subdivision-evidence condition (unlike the /3 pass): both candidates
+come from the scan, so the competing layer's existence is already proven
+by its ranking — and honeycolor's layer turned out to be numerous but
+WEAK onsets (beat phase dominates 14x weighted). A true 241 song is
+protected structurally: its margin over the 180 alias would be ~2.7.
+
+**Offset stage replaced: slopes-based phase selection.** With BPM fixed,
+honeycolor's offset was still 53ms off — and the cause traced to onset
+sparsity (only ~16 onsets survive peak-picking in 60s of this mix; the
+histogram phase vote locked onto a weak percussion cluster). The waveform
+leading-edge (slopes) scan — onset-detector-independent — found the
+user's grid at +30ms, matching the systematic residual seen on every real
+song (BFTW +30ms, LTLO +27ms). `base_offset_for_bpm` (onset-histogram
+vote, reference `GetBaseOffsetValue`) replaced by `slopes_best_phase`:
+full phase scan at 1ms steps against the slopes, mean-normalized over
+in-range grid points (edge-artifact fix: the slopes array's zeroed 50ms
+edges otherwise give phases packing more grid points into the valid
+region a one-click bonus), with explicit flat-plateau tracking that
+reports the plateau END (the physical attack side; a plain max lands
+arbitrarily inside the flat top within f64 noise). Verified
+equivalent-or-better on all 4 real songs (dense-onset songs agree with
+the old estimator within ~5ms) and stricter synthetic unit tests (+-5ms).
+
+Consistent ~25-30ms offset residual vs external ground truth on all real
+songs remains as a documented calibration follow-up (both the ODF and the
+slope window center on a transient's rise rather than its start; NOT
+fixed here because the synthetic sharp-click tests, which have zero rise
+time by construction, pin the current calibration).
+
+Validated end state (all committed as e2e assertions): boy for the
+weekend 68.000 BPM, Call Me Maybe 120.000, Leave the Lights On 170.000
+(was 56.667), honeycolor 180.098 (was 241.291) with offset 0.090 =
+ground-truth grid + the known systematic residual. 48 tests passing.

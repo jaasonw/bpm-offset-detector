@@ -46,10 +46,10 @@ impl GapData {
         }
     }
 
-    /// Direct access to the histogram buffer, for callers (like offset
-    /// detection) that need to build their own weighting scheme instead of
-    /// the strength-weighted one used by [`GapData::confidence_for_interval`]
-    /// and [`GapData::confidence_for_bpm`].
+    /// Direct access to the histogram buffer, for tests that need to set
+    /// up exact histogram contents instead of going through a confidence
+    /// function's weighting scheme.
+    #[cfg(test)]
     pub(crate) fn histogram_mut(&mut self) -> &mut [f64] {
         &mut self.histogram
     }

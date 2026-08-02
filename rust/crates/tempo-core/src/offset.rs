@@ -14,68 +14,92 @@
 //! it once and reuses it across every candidate instead of recomputing it
 //! per candidate.
 
-use crate::gapdata::GapData;
-use crate::{Onset, TempoResult};
+use crate::TempoResult;
 
-pub(crate) fn calculate_offset(
-    samples: &[f32],
-    sample_rate: u32,
-    onsets: &[Onset],
-    results: &mut [TempoResult],
-) {
+pub(crate) fn calculate_offset(samples: &[f32], sample_rate: u32, results: &mut [TempoResult]) {
     if results.is_empty() {
         return;
     }
 
-    let max_interval = results
-        .iter()
-        .map(|t| sample_rate as f64 * 60.0 / t.bpm)
-        .fold(0.0f64, f64::max);
-    let mut gapdata = GapData::new((max_interval + 1.0) as usize, 1);
-
-    for t in results.iter_mut() {
-        t.offset = base_offset_for_bpm(&mut gapdata, sample_rate, onsets, t.bpm);
-    }
-
     let slopes = compute_slopes(samples, sample_rate);
     for t in results.iter_mut() {
+        t.offset = slopes_best_phase(&slopes, sample_rate, t.bpm);
         t.offset = adjust_for_offbeats(sample_rate, &slopes, t.offset, t.bpm);
     }
 }
 
-/// Finds the most-supported beat phase for `bpm`: builds a histogram of
-/// onset counts (unweighted — every onset counts as `1.0` regardless of its
-/// `strength`) wrapped by the BPM's fractional sample interval, and returns
-/// the position with the highest Hamming-windowed gap confidence, in
-/// seconds.
-fn base_offset_for_bpm(gapdata: &mut GapData, sample_rate: u32, onsets: &[Onset], bpm: f64) -> f64 {
-    let interval_f = sample_rate as f64 * 60.0 / bpm;
-    let interval = (interval_f + 0.5) as usize;
+/// Finds the beat phase with the most waveform leading-edge support:
+/// scans every phase of the beat grid in 1ms steps and returns the one
+/// whose grid positions land on the most total leading-edge energy.
+///
+/// This replaces the reference's onset-histogram phase vote (onset
+/// positions wrapped modulo the interval, `GetBaseOffsetValue`), which
+/// fails when onset detection is sparse: on honeycolor.mp3 only ~16
+/// onsets survive peak-picking in the analyzed window, and their wrapped
+/// histogram locked onto a weak percussion cluster 53ms from the true
+/// downbeat phase. The slopes are computed from the raw waveform with no
+/// detection threshold, so downbeats contribute even when the onset
+/// detector misses them. On dense-onset material the two estimators agree
+/// to within ~5ms (verified on the real-song regression suite), so this
+/// is safe as a uniform replacement, not just a sparse-input fallback.
+fn slopes_best_phase(slopes: &[f64], sample_rate: u32, bpm: f64) -> f64 {
+    let interval = sample_rate as f64 * 60.0 / bpm;
+    let step = (sample_rate as usize / 1000).max(1); // 1ms
+                                                     // compute_slopes can't produce values within half a window of either
+                                                     // end of the audio; grid points landing there contribute spurious
+                                                     // zeros, so they're excluded from BOTH the sum and the count —
+                                                     // otherwise phases whose grid packs more points into the valid region
+                                                     // win regardless of the music (a one-click edge bonus swung the
+                                                     // synthetic offset tests by ~39ms).
+    let edge = slope_half_window(sample_rate);
+    let valid_end = slopes.len().saturating_sub(edge);
+    let mut best_sum = f64::NEG_INFINITY;
+    let mut plateau_end = 0usize;
 
-    let histogram = gapdata.histogram_mut();
-    histogram[..interval].fill(0.0);
-
-    let mut wrapped_pos = Vec::with_capacity(onsets.len());
-    for onset in onsets {
-        let pos = (onset.pos as f64).rem_euclid(interval_f) as usize;
-        let pos = pos.min(interval - 1);
-        wrapped_pos.push(pos);
-        histogram[pos] += 1.0;
-    }
-
-    let mut highest = 0.0f64;
-    let mut offset_pos = 0usize;
-    for &pos in &wrapped_pos {
-        let mut confidence = gapdata.gap_confidence(pos, interval);
-        let offbeat_pos = (pos + interval / 2) % interval;
-        confidence += gapdata.gap_confidence(offbeat_pos, interval) * 0.5;
-        if confidence > highest {
-            highest = confidence;
-            offset_pos = pos;
+    let mut phase = 0usize;
+    while (phase as f64) < interval {
+        let mut sum = 0.0;
+        let mut count = 0usize;
+        let mut pos = phase as f64;
+        while (pos as usize) < slopes.len() {
+            let i = pos as usize;
+            if i >= edge && i < valid_end {
+                sum += slopes[i];
+                count += 1;
+            }
+            pos += interval;
         }
+        let mean = if count > 0 { sum / count as f64 } else { 0.0 };
+        // For a transient shorter than the slope window the maximum is a
+        // plateau (the window fully contains the click for a range of
+        // phases), whose per-phase means differ only by floating-point
+        // noise — so a plain max lands at an arbitrary point inside it.
+        // The physical attack sits at the plateau's END (the last phase
+        // whose window still fully contains the transient), so track the
+        // flat top explicitly and report its end.
+        if mean > best_sum + PLATEAU_EPSILON {
+            best_sum = mean;
+            plateau_end = phase;
+        } else if mean >= best_sum - PLATEAU_EPSILON {
+            plateau_end = phase;
+        }
+        phase += step;
     }
 
-    offset_pos as f64 / sample_rate as f64
+    plateau_end as f64 / sample_rate as f64
+}
+
+/// Two grid-phase means within this absolute tolerance are considered the
+/// same flat maximum (see `slopes_best_phase`). Far above f64 summation
+/// noise (~1e-13 on these magnitudes), far below the per-step variation
+/// of any non-flat peak on real audio.
+const PLATEAU_EPSILON: f64 = 1e-6;
+
+/// Half the sliding window used by [`compute_slopes`] (50ms each side).
+/// Shared with `slopes_best_phase`, which must know which region of the
+/// slopes array contains computed values vs. zeroed edges.
+fn slope_half_window(sample_rate: u32) -> usize {
+    (sample_rate / 20) as usize
 }
 
 /// Creates a "leading-edge energy" representation of the waveform: at each
@@ -88,7 +112,7 @@ pub(crate) fn compute_slopes(samples: &[f32], sample_rate: u32) -> Vec<f64> {
     let num_frames = samples.len();
     let mut out = vec![0.0f64; num_frames];
 
-    let half_window = (sample_rate / 20) as usize; // 50ms
+    let half_window = slope_half_window(sample_rate);
     if half_window == 0 || num_frames < half_window * 2 {
         return out;
     }
@@ -154,15 +178,14 @@ mod tests {
     /// at each beat (so `compute_slopes` has real leading edges to find),
     /// starting at `offset_samples` and repeating every `interval` samples,
     /// with the same small deterministic jitter used elsewhere so the
-    /// onsets aren't perfectly periodic.
+    /// clicks aren't perfectly periodic.
     fn synthetic_click_signal(
         num_frames: usize,
         offset_samples: usize,
         interval: usize,
         click_len: usize,
-    ) -> (Vec<f32>, Vec<Onset>) {
+    ) -> Vec<f32> {
         let mut samples = vec![0.0f32; num_frames];
-        let mut onsets = Vec::new();
 
         let mut k = 0i64;
         loop {
@@ -179,11 +202,10 @@ mod tests {
             for i in 0..click_len {
                 samples[pos + i] = (1.0 - i as f32 / click_len as f32).max(0.0);
             }
-            onsets.push(Onset::new(pos, 1.0));
             k += 1;
         }
 
-        (samples, onsets)
+        samples
     }
 
     #[test]
@@ -195,14 +217,14 @@ mod tests {
         let offset_samples = (true_offset_secs * sample_rate as f64).round() as usize;
         let num_frames = interval * 60 + offset_samples + 1000;
 
-        let (samples, onsets) = synthetic_click_signal(num_frames, offset_samples, interval, 500);
+        let samples = synthetic_click_signal(num_frames, offset_samples, interval, 500);
 
         let mut results = vec![TempoResult {
             bpm,
             offset: 0.0,
             fitness: 1.0,
         }];
-        calculate_offset(&samples, sample_rate, &onsets, &mut results);
+        calculate_offset(&samples, sample_rate, &mut results);
 
         let error = (results[0].offset - true_offset_secs).abs();
         assert!(
@@ -221,14 +243,14 @@ mod tests {
         let offset_samples = (true_offset_secs * sample_rate as f64).round() as usize;
         let num_frames = interval * 60 + offset_samples + 1000;
 
-        let (samples, onsets) = synthetic_click_signal(num_frames, offset_samples, interval, 500);
+        let samples = synthetic_click_signal(num_frames, offset_samples, interval, 500);
 
         let mut results = vec![TempoResult {
             bpm,
             offset: 0.0,
             fitness: 1.0,
         }];
-        calculate_offset(&samples, sample_rate, &onsets, &mut results);
+        calculate_offset(&samples, sample_rate, &mut results);
 
         let error = (results[0].offset - true_offset_secs).abs();
         assert!(
@@ -241,7 +263,7 @@ mod tests {
     #[test]
     fn empty_results_is_a_noop() {
         let mut results: Vec<TempoResult> = Vec::new();
-        calculate_offset(&[0.0; 1000], 44100, &[], &mut results);
+        calculate_offset(&[0.0; 1000], 44100, &mut results);
         assert!(results.is_empty());
     }
 }

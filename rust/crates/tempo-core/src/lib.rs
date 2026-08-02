@@ -93,16 +93,11 @@ pub fn calculate_bpm(onsets: &[Onset], sample_rate: u32, opts: &DetectOptions) -
     bpm::calculate_bpm(onsets, sample_rate, opts)
 }
 
-/// Fills in the `offset` field of each candidate in `results`, given the
-/// same onsets used to compute them and the raw mono samples they came
-/// from (needed for offbeat disambiguation via waveform slope).
-pub fn calculate_offset(
-    samples: &[f32],
-    sample_rate: u32,
-    onsets: &[Onset],
-    results: &mut [TempoResult],
-) {
-    offset::calculate_offset(samples, sample_rate, onsets, results);
+/// Fills in the `offset` field of each candidate in `results` from the
+/// raw mono samples (the beat phase is chosen by waveform leading-edge
+/// energy; see `offset::slopes_best_phase`).
+pub fn calculate_offset(samples: &[f32], sample_rate: u32, results: &mut [TempoResult]) {
+    offset::calculate_offset(samples, sample_rate, results);
 }
 
 /// Runs the full pipeline: onset detection (complex-domain) over `samples`,
@@ -132,7 +127,7 @@ pub fn detect_with_onsets(
 ) -> (Vec<Onset>, Vec<TempoResult>, DetectionContext) {
     let onsets = onset::find_onsets(samples, sample_rate);
     let (mut results, triplet_feel) = bpm::calculate_bpm_with_context(&onsets, sample_rate, opts);
-    calculate_offset(samples, sample_rate, &onsets, &mut results);
+    calculate_offset(samples, sample_rate, &mut results);
     (onsets, results, DetectionContext { triplet_feel })
 }
 

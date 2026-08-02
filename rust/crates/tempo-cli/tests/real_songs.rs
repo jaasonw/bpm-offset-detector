@@ -162,13 +162,13 @@ fn leave_the_lights_on() {
     assert_meter_not_wrong(&json, &["4/4"]);
 }
 
-/// True tempo 180 BPM 4/4, offset 726ms. Known bug, test ignored until
-/// the generalized harmonic-preference pass lands: a real secondary
-/// periodicity (a regular percussion layer at ~4:3 of the beat) outscores
-/// the true tempo under the scan's accent-blind constant-weight voting,
-/// so 241.291 BPM currently ranks #1 with 180.098 at #2.
+/// True tempo 180 BPM 4/4, offset 726ms. Regression test for a competing
+/// periodicity at a non-octave ratio: a regular percussion layer at ~4:3
+/// of the beat (241.291 BPM) outscores the true tempo under the scan's
+/// accent-blind constant-weight voting, so 241.291 ranked #1 with
+/// 180.098 at #2 until the generalized harmonic-preference pass learned
+/// to demote a 4:3 competitor in favor of its beat-dominant fundamental.
 #[test]
-#[ignore = "known bug: true 180 BPM loses to a ~4:3-ratio periodicity; awaiting generalized harmonic preference pass"]
 fn honeycolor() {
     let Some(json) = analyze("honeycolor.mp3") else {
         return;
