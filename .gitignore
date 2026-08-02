@@ -483,3 +483,5 @@ Thumbs.db
 
 
 # End of https://www.toptal.com/developers/gitignore/api/python,latex,c++
+# Real-song test fixtures (copyrighted, not committed; tests skip when absent)
+rust/*.mp3

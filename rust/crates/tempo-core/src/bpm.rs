@@ -93,6 +93,16 @@ const SUBDIVISION_EVIDENCE_RATIO: f64 = 0.3;
 /// of the harmonic's (the harmonic naturally collects all subdivision votes,
 /// so the fundamental always has less; this just ensures it's substantial).
 const FUNDAMENTAL_SUPPORT_RATIO: f64 = 0.45;
+/// The pass may only override an UNCERTAIN scan: the top-2 fitness margin
+/// must be below this factor. A true 3x-harmonic lock has a structural
+/// margin ceiling — its half-tempo alias always scores 3/4 of the lock
+/// (beat cluster N/2 plus the offbeat bonus N/4), capping the margin at
+/// 4/3 — so a threshold of 1.5 admits every genuine harmonic lock while
+/// protecting songs whose fast tempo won decisively on its own structure
+/// (e.g. a true 170 BPM winning 1.76x over its runner-up must not be
+/// thirded to 56.667 just because incidental swing accents alias into the
+/// subharmonic's grid).
+const SCAN_UNCERTAINTY_MARGIN: f64 = 1.5;
 
 /// Re-labels the winning candidate as its 1/3 subharmonic when the accent
 /// evidence supports it, fixing triplet-feel songs being reported at 3x
@@ -113,7 +123,12 @@ const FUNDAMENTAL_SUPPORT_RATIO: f64 = 0.45;
 ///   song genuinely has a triplet feel — without this, plain songs whose
 ///   beats merely alias into the subharmonic's grid would flip), and
 /// - substantial support: the fundamental's total weighted confidence is a
-///   reasonable fraction of the harmonic's.
+///   reasonable fraction of the harmonic's, and
+/// - scan uncertainty: the scan's top-2 margin is below
+///   `SCAN_UNCERTAINTY_MARGIN` — a genuine 3x lock is structurally capped
+///   at a 4/3 margin by its half-tempo alias, so a decisive margin means
+///   the winner earned its ranking and must not be thirded (regression:
+///   a true 170 BPM 4/4 song with swing accents was demoted to 56.667).
 ///
 /// When the rule fires, the fundamental replaces the #1 entry (position
 /// signals the preference decision); its `fitness` reports the fundamental's
@@ -153,7 +168,15 @@ fn apply_subharmonic_preference(
     let subdivisions_real = c_sub1 + c_sub2 >= SUBDIVISION_EVIDENCE_RATIO * c_beat;
     let substantial_support = w_sub >= FUNDAMENTAL_SUPPORT_RATIO * w_seed;
 
-    if beat_dominant && subdivisions_real && substantial_support {
+    // Only second-guess an uncertain scan. A single surviving candidate is
+    // decisive by definition (everything else fell below the scan's coarse
+    // threshold), and a decisive top-2 margin means the winner's support
+    // comes from its own structure, not the window bias this pass exists
+    // to correct.
+    let scan_uncertain =
+        tempo.len() >= 2 && tempo[0].fitness / tempo[1].fitness < SCAN_UNCERTAINTY_MARGIN;
+
+    if beat_dominant && subdivisions_real && substantial_support && scan_uncertain {
         let fitness = gapdata.confidence_for_bpm(onsets, sub_interval);
         tempo[0] = TempoResult {
             bpm: sub_bpm,
