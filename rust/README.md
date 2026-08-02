@@ -125,6 +125,28 @@ skipped and logged. The offset-error distribution across many maps is how
 the systematic offset bias gets calibrated with statistical confidence
 instead of 3 data points.
 
+Report columns (CSV and `--table`; the table view drops `audio` and merges
+the two meter columns into `true→detected`):
+
+- `map` / `osz`: the beatmapset filename (table view truncates at 45 chars).
+- `status`: `ok` = analyzed; `skipped: <reason>` = unusable (variable BPM,
+  missing audio, decode failure).
+- `true_bpm` / `detected_bpm` / `bpm_error`: mapper's BPM vs our #1
+  candidate, and their difference.
+- `true_bpm_rank` (`r` in the table): which position the true BPM holds in
+  our top-3 (1 = correct outright); empty when it's absent from the top 3.
+- `true_offset_ms`: mapper's first timing-point time, in ms (can exceed
+  one beat interval).
+- `detected_offset_ms`: our beat-grid phase, in ms, always modulo one beat
+  interval — so it is NOT directly comparable to `true_offset_ms` by eye.
+- `offset_error_ms` (`off_err`): signed error in ms, wrapped to ±half a
+  beat. Empty when the BPM is wrong (an offset on the wrong grid is
+  meaningless). Expect ≈ +26 (the documented systematic bias); a good row
+  is `r=1`, `bpm_error` ≈ 0, `off_err` in the +21..+30 band.
+- `meter_true` / `meter_detected` (`meter` as `true→detected` in the
+  table): mapper's beats-per-bar vs our estimate; `-` = no estimate
+  produced, `unknown` = abstained (confidence < 0.3).
+
 ## Notes on fidelity to the reference implementation
 
 Every part of the algorithm is a faithful (if idiomatically-Rust) port of
