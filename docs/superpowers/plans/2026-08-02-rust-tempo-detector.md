@@ -398,3 +398,37 @@ count toward ambiguity.
 Validated on the user's MP3: reports 12/8 at confidence 1.00 — consistent
 with the triplet feel that caused the original 3x misdetection. Uniform
 click trains correctly report near-zero confidence.
+
+### Task 15: Fix meter estimation's large-grouping bias (12/8 on every song)
+
+Real-world testing ("Call Me Maybe", a true 4/4 song, reported 12/8 @
+0.64; the user's other song also 12/8) exposed a multiple-comparison bias
+in the best-phase-contrast scorer: taking the max over g phase means lets
+the largest grouping (12) cherry-pick noise, so it wins on any real
+(noisy) accent data. Synthetic fixtures were too clean to expose it.
+
+Fix, TDD'd with noise-robustness regression tests (clean patterns +
+deterministic noise, which failed with exactly the production bug — "12/8"
+for everything — before the fix):
+
+1. Replaced phase-contrast with mean-centered autocorrelation of the
+   per-beat accent sequence at lags {2,3,4,6,12}, normalized by zero-lag
+   energy. Noise scores ~0 at every lag; periodicity scores high at its
+   lag and multiples.
+2. Winner = smallest lag within TIE_MARGIN (0.05) of the best score
+   (fundamental, not harmonic). Confidence = winning score (natural 0-1).
+3. Triplet-aware notation: when the BPM stage's subharmonic preference
+   fired (`DetectionContext.triplet_feel`, threaded through
+   `detect_with_onsets`), a winning 2- or 4-beat grouping is reported as
+   6/8 or 12/8.
+4. Honest abstention: real pop often has near-flat beat-level accents
+   (drums hit every beat alike; bar accents live in bass/harmony/vocals),
+   so below CONFIDENCE_FLOOR (0.3) the estimate is "unknown" instead of a
+   guess. One subtlety found via TDD: autocorrelation measures
+   periodicity, not salience — a weak-but-consistent pattern IS legitimate
+   structure and is still reported.
+
+Validated: Call Me Maybe -> "unknown" @ 0.21 (was 12/8 @ 0.64; its
+beat-level accents genuinely lack bar structure — lag-4 correlation is
+negative), boy for the weekend -> "unknown" @ 0.00, all synthetic
+fixtures correct including noisy variants.

@@ -112,31 +112,51 @@ pub fn detect(samples: &[f32], sample_rate: u32, opts: &DetectOptions) -> Vec<Te
     detect_with_onsets(samples, sample_rate, opts).1
 }
 
-/// Like [`detect`], but also returns the detected onsets, for callers that
-/// want to run further analysis (e.g. [`estimate_meter`]) without
-/// re-running onset detection.
+/// Extra context from a detection run, for downstream analysis.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DetectionContext {
+    /// True when the subharmonic preference pass re-labeled the top
+    /// candidate as its 1/3 subharmonic — i.e. the song shows triplet
+    /// (compound-meter) subdivision evidence. Meter estimation uses this to
+    /// report a confident 2- or 4-beat grouping as 6/8 or 12/8.
+    pub triplet_feel: bool,
+}
+
+/// Like [`detect`], but also returns the detected onsets and a context
+/// object, for callers that want to run further analysis (e.g.
+/// [`estimate_meter`]) without re-running onset detection.
 pub fn detect_with_onsets(
     samples: &[f32],
     sample_rate: u32,
     opts: &DetectOptions,
-) -> (Vec<Onset>, Vec<TempoResult>) {
+) -> (Vec<Onset>, Vec<TempoResult>, DetectionContext) {
     let onsets = onset::find_onsets(samples, sample_rate);
-    let mut results = calculate_bpm(&onsets, sample_rate, opts);
+    let (mut results, triplet_feel) = bpm::calculate_bpm_with_context(&onsets, sample_rate, opts);
     calculate_offset(samples, sample_rate, &onsets, &mut results);
-    (onsets, results)
+    (onsets, results, DetectionContext { triplet_feel })
 }
 
 /// Estimates the time signature over the beat grid implied by a detection
 /// result. Experimental: only the beats-per-bar grouping (2, 3, 4, 6, 12)
-/// is estimated, from per-beat accent contrast, and the estimate is a
+/// is estimated, from per-beat accent periodicity, and the estimate is a
 /// hint rather than ground truth (see the meter module docs). Returns
-/// `None` when there's too little data to estimate.
+/// `None` when there's too little data to estimate. Pass the
+/// [`DetectionContext`] returned by [`detect_with_onsets`] (or
+/// `DetectionContext::default()` when calling with hand-built onsets).
 pub fn estimate_meter(
     onsets: &[Onset],
     samples: &[f32],
     sample_rate: u32,
     bpm: f64,
     offset: f64,
+    context: &DetectionContext,
 ) -> Option<MeterEstimate> {
-    meter::estimate_meter(onsets, samples, sample_rate, bpm, offset)
+    meter::estimate_meter(
+        onsets,
+        samples,
+        sample_rate,
+        bpm,
+        offset,
+        context.triplet_feel,
+    )
 }

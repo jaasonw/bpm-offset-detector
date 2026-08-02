@@ -54,9 +54,13 @@ Features beyond the reference C++ implementation:
   behavior.
 - **Experimental time-signature estimation**: each result includes a
   `time_signature` estimate (2/4, 3/4, 4/4, 6/8, 12/8) with a confidence
-  score, derived from per-beat accent structure. Treat low-confidence
-  (<0.3) estimates as unreliable; only the beats-per-bar grouping is
-  estimated (4/4 vs 2/2 is notational, not acoustic).
+  score, derived from per-beat accent periodicity (mean-centered
+  autocorrelation over the beat grid, with triplet-aware 6/8/12-8 notation
+  when the BPM stage found compound-meter evidence). When the accent
+  structure is too weak (confidence < 0.3 — common in pop, where drums hit
+  every beat alike and bar accents live in other layers), the estimate is
+  reported as `"unknown"` rather than guessing. Only the beats-per-bar
+  grouping is estimated (4/4 vs 2/2 is notational, not acoustic).
 - **Gapless decoding**: MP3 encoder delay/padding is trimmed, so reported
   offsets line up with the original source audio instead of being shifted
   late by 25-50ms.

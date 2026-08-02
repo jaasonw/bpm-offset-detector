@@ -16,14 +16,29 @@ pub(crate) fn calculate_bpm(
     sample_rate: u32,
     opts: &DetectOptions,
 ) -> Vec<TempoResult> {
+    calculate_bpm_with_context(onsets, sample_rate, opts).0
+}
+
+/// Like `calculate_bpm`, but also reports whether the subharmonic
+/// preference pass re-labeled the top candidate as its 1/3 subharmonic
+/// (i.e. the song shows triplet-subdivision evidence), for downstream
+/// analysis like meter estimation.
+pub(crate) fn calculate_bpm_with_context(
+    onsets: &[Onset],
+    sample_rate: u32,
+    opts: &DetectOptions,
+) -> (Vec<TempoResult>, bool) {
     // In order to determine the BPM, we need at least two onsets. Matches
     // the reference's fallback behavior rather than erroring.
     if onsets.len() < 2 {
-        return vec![TempoResult {
-            bpm: 100.0,
-            offset: 0.0,
-            fitness: 1.0,
-        }];
+        return (
+            vec![TempoResult {
+                bpm: 100.0,
+                offset: 0.0,
+                fitness: 1.0,
+            }],
+            false,
+        );
     }
 
     let candidates = scan_intervals(onsets, sample_rate, opts.min_bpm, opts.max_bpm);
@@ -59,11 +74,13 @@ pub(crate) fn calculate_bpm(
     // was part of the top 3 choices, so anything beyond that is discarded.
     tempo.truncate(3);
 
+    let mut triplet_feel = false;
     if opts.subharmonic_preference {
-        apply_subharmonic_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
+        triplet_feel =
+            apply_subharmonic_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
     }
 
-    tempo
+    (tempo, triplet_feel)
 }
 
 // Subharmonic preference rule thresholds (see apply_subharmonic_preference).
@@ -109,12 +126,14 @@ fn apply_subharmonic_preference(
     onsets: &[Onset],
     sample_rate: u32,
     opts: &DetectOptions,
-) {
-    let Some(seed) = tempo.first() else { return };
+) -> bool {
+    let Some(seed) = tempo.first() else {
+        return false;
+    };
     let seed_bpm = seed.bpm;
     let sub_bpm = seed_bpm / 3.0;
     if sub_bpm < opts.min_bpm {
-        return;
+        return false;
     }
 
     let seed_interval = sample_rate as f64 * 60.0 / seed_bpm;
@@ -141,6 +160,9 @@ fn apply_subharmonic_preference(
             offset: 0.0,
             fitness,
         };
+        true
+    } else {
+        false
     }
 }
 

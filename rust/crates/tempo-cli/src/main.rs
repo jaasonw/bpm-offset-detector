@@ -153,11 +153,12 @@ fn run_single(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (samples, sample_rate) = decode_audio_file(file)?;
     let slice = slice_to_range(&samples, sample_rate, options);
-    let (onsets, results) = detect_with_onsets(slice, sample_rate, &detect_options_from(options));
+    let (onsets, results, context) =
+        detect_with_onsets(slice, sample_rate, &detect_options_from(options));
 
     let meter = results
         .first()
-        .and_then(|top| estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset));
+        .and_then(|top| estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset, &context));
 
     if options.json {
         #[derive(Serialize)]
@@ -230,12 +231,12 @@ fn run_batch(
             }
         };
         let slice = slice_to_range(&samples, sample_rate, options);
-        let (onsets, results) =
+        let (onsets, results, context) =
             detect_with_onsets(slice, sample_rate, &detect_options_from(options));
 
-        let meter = results
-            .first()
-            .and_then(|top| estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset));
+        let meter = results.first().and_then(|top| {
+            estimate_meter(&onsets, slice, sample_rate, top.bpm, top.offset, &context)
+        });
         let (meter_notation, meter_confidence) = meter
             .as_ref()
             .map(|m| (m.notation.clone(), m.confidence))
