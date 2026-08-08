@@ -4,11 +4,7 @@ A cross-platform, GPL-3.0-licensed reimplementation of the tempo/BPM and beat-
 offset detection algorithm documented in
 [`doc/syslab-version/paper.tex`](original/doc/syslab-version/paper.tex) and
 originally implemented in [`FindTempo_standalone.cpp`](original/FindTempo_standalone.cpp)
-(also GPL, depends on `aubio`). Built to fix
-[the macOS segfault](https://github.com/nathanstep55/bpm-offset-detector/issues/1)
-(root cause: macOS's strict `aligned_alloc` returning `NULL` for
-non-16-byte-aligned sizes, which the C++ never checks for) and to remove the
-`aubio` dependency, which is difficult to build cross-platform.
+(also GPL, depends on `aubio`).
 
 See [`docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md`](docs/superpowers/specs/2026-08-02-rust-tempo-detector-design.md)
 for the full design.
@@ -210,6 +206,4 @@ Every part of the algorithm is a faithful (if idiomatically-Rust) port of
 
 ## License
 
-GPL-3.0 (see [`LICENSE`](LICENSE)). The original C++/Python research code
-in [`original/`](original/) is also GPL-3.0 (its own
-[`LICENSE`](original/LICENSE)).
+GPL-3.0 (see [`LICENSE`](LICENSE)).
