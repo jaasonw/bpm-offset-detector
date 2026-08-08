@@ -38,7 +38,7 @@ export default function Home() {
           </a>
         </p>
         <p>
-          Copyright 2025 &mdash; open source under the{" "}
+          Copyright 2026 &mdash; open source under the{" "}
           <a
             href="https://github.com/jaasonw/bpm-offset-detector/blob/main/LICENSE"
             target="_blank"
