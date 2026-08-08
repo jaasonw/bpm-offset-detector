@@ -71,6 +71,31 @@ Features beyond the reference C++ implementation:
   that grid's beat phase dominates its offbeat phase. Restricted to
   flip-correction because the same evidence is unsafe against raw scan
   winners (backbeat kick/snare splits fake it).
+- **Octave preference**: when the accent evidence shows the scan locked
+  onto a subdivision layer rather than the beat, the winner is re-labeled
+  as its half-tempo octave (fixes e.g. a true 128 BPM song detected as
+  256). The scan is structurally biased toward the double: at the true
+  interval the confidence function scores `f(beat) + f(offbeat)/2`, but at
+  the halved interval beats and offbeats wrap into the same histogram bin
+  and collect the full sum, so the double wins on arithmetic alone
+  whenever it falls inside the BPM range. The gate is deliberately very
+  strict (beat phase must dominate the offbeat phase by 2.6x) because the
+  accent evidence provably cannot separate the two cases in general — a
+  true 140 BPM song needing correction and a true 220 BPM song that must
+  not be touched were measured 0.01 apart. The pass therefore only fires
+  in the unambiguous tail and abstains otherwise, since a missed flip
+  leaves the tempo in the right octave family while a wrong flip reports a
+  tempo nobody taps.
+- **Known octave limitations**: a song is at risk of being reported at
+  double its tempo exactly when 2x its true BPM falls inside
+  `[--min-bpm, --max-bpm]` and the accent evidence is too weak for the
+  pass above. Narrowing `--max-bpm` is the direct lever (the reference
+  implementation's `[89, 205]` range avoided the problem by spanning
+  barely one octave; the wider 40-260 default trades that for finding
+  genuinely slow and fast songs). Note also that ground-truth BPM taken
+  from rhythm-game charts is sometimes notated at double the perceived
+  tempo, because a doubled value gives mappers finer editor snapping — so
+  a "wrong" half-tempo answer is sometimes the musically correct one.
 - **Waveform-based offset phase**: the beat offset is chosen by scanning
   the beat grid against raw waveform leading-edge energy rather than by
   voting detected onsets, so the offset stays correct even when onset

@@ -87,11 +87,17 @@ WebAssembly:
    re-checks close top-2 candidates at full precision, returns top 3. Also
    where the beyond-reference passes live: subharmonic preference (1/3
    triplet-feel correction), harmonic-ratio demotion (4:3 secondary
-   percussion), and 3:2 flip correction — see `README.md` for the specific
+   percussion), 3:2 flip correction, and octave preference (1/2, for when
+   the scan locked the subdivision layer) — see `README.md` for the specific
    failure modes each one fixes and why they're gated the way they are
    (these gates exist because naive versions caused regressions on other
    songs; don't loosen them without re-running the real-song and osu-eval
-   suites).
+   suites). `OCTAVE_DOMINANCE_RATIO` in particular looks absurdly high at
+   2.6 — it is high because the two classes it separates were measured to
+   OVERLAP (a song needing correction at 1.575, one that must not be
+   touched at 1.585), so the pass is designed to abstain on everything but
+   the unambiguous tail. Lowering it will wrongly halve correct tempos; the
+   comment on the constant carries the full measurement table.
 5. **`offset.rs`** — beat-offset detection per BPM candidate: waveform
    leading-edge energy (not onset voting) determines beat phase, which is
    what keeps offset correct on dense/quiet mixes where few onsets survive

@@ -1,14 +1,47 @@
 "use client";
 
-import { useCallback, useId, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { decodeToMono } from "@/lib/decode-audio";
 import { analyzeAudio, type AnalyzeResult } from "@/lib/tempo-wasm";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 function formatOffset(seconds: number): string {
   return `${Math.round(seconds * 1000)}ms`;
+}
+
+const OPTIONS_STORAGE_KEY = "tempo-detector-options";
+
+interface SavedOptions {
+  minBpm: number;
+  maxBpm: number;
+  subharmonicPreference: boolean;
+  start: number;
+  duration: number;
+}
+
+function loadSavedOptions(): Partial<SavedOptions> {
+  try {
+    const raw = localStorage.getItem(OPTIONS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Partial<SavedOptions>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Persists imperatively from each onChange rather than reactively off state
+// (a `useEffect` keyed on the option values would also fire once on mount,
+// racing the mount-time restore below and clobbering it with stale
+// defaults — reliably, since React 18 Strict Mode double-invokes effects
+// in dev).
+function persistOption<K extends keyof SavedOptions>(key: K, value: SavedOptions[K]) {
+  try {
+    localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify({ ...loadSavedOptions(), [key]: value }));
+  } catch {
+    // Storage unavailable (private browsing, quota, etc.) — not persisted.
+  }
 }
 
 export default function Analyzer() {
@@ -22,14 +55,28 @@ export default function Analyzer() {
   );
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fieldId = useId();
 
+  // Restore saved options on mount. Runs once, after hydration, so there's
+  // no server/client mismatch to worry about (defaults above always match
+  // the server-rendered markup).
+  useEffect(() => {
+    const saved = loadSavedOptions();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (typeof saved.minBpm === "number") setMinBpm(saved.minBpm);
+    if (typeof saved.maxBpm === "number") setMaxBpm(saved.maxBpm);
+    if (typeof saved.subharmonicPreference === "boolean")
+      setSubharmonicPreference(saved.subharmonicPreference);
+    if (typeof saved.start === "number") setStart(saved.start);
+    if (typeof saved.duration === "number") setDuration(saved.duration);
+  }, []);
+
   const runAnalysis = useCallback(
     async (file: File) => {
-      setFileName(file.name);
+      setCurrentFile(file);
       setError(null);
       setResult(null);
       try {
@@ -55,6 +102,10 @@ export default function Analyzer() {
   );
 
   const busy = status === "decoding" || status === "analyzing";
+
+  const handleReanalyze = useCallback(() => {
+    if (currentFile) void runAnalysis(currentFile);
+  }, [currentFile, runAnalysis]);
 
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
@@ -95,7 +146,7 @@ export default function Analyzer() {
         />
         {busy ? (
           <p className="text-sm text-muted-foreground">
-            {status === "decoding" ? "Decoding..." : "Analyzing..."} {fileName}
+            {status === "decoding" ? "Decoding..." : "Analyzing..."} {currentFile?.name}
           </p>
         ) : (
           <>
@@ -106,6 +157,23 @@ export default function Analyzer() {
           </>
         )}
       </div>
+
+      {currentFile && !busy && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground">
+          <span className="truncate">{currentFile.name}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleReanalyze();
+            }}
+          >
+            Reanalyze
+          </Button>
+        </div>
+      )}
 
       <details className="rounded-lg border border-border p-2.5 text-sm">
         <summary className="cursor-pointer font-medium text-foreground">Options</summary>
@@ -118,7 +186,11 @@ export default function Analyzer() {
               id={`${fieldId}-min-bpm`}
               type="number"
               value={minBpm}
-              onChange={(e) => setMinBpm(Number(e.target.value))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setMinBpm(v);
+                persistOption("minBpm", v);
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -129,7 +201,11 @@ export default function Analyzer() {
               id={`${fieldId}-max-bpm`}
               type="number"
               value={maxBpm}
-              onChange={(e) => setMaxBpm(Number(e.target.value))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setMaxBpm(v);
+                persistOption("maxBpm", v);
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -140,7 +216,11 @@ export default function Analyzer() {
               id={`${fieldId}-start`}
               type="number"
               value={start}
-              onChange={(e) => setStart(Number(e.target.value))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setStart(v);
+                persistOption("start", v);
+              }}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -151,14 +231,22 @@ export default function Analyzer() {
               id={`${fieldId}-duration`}
               type="number"
               value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setDuration(v);
+                persistOption("duration", v);
+              }}
             />
           </div>
           <div className="col-span-2 flex items-center gap-2">
             <Checkbox
               id={`${fieldId}-subharmonic`}
               checked={subharmonicPreference}
-              onCheckedChange={(checked) => setSubharmonicPreference(checked === true)}
+              onCheckedChange={(checked) => {
+                const v = checked === true;
+                setSubharmonicPreference(v);
+                persistOption("subharmonicPreference", v);
+              }}
             />
             <Label
               htmlFor={`${fieldId}-subharmonic`}
