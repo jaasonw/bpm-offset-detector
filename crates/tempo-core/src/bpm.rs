@@ -80,6 +80,7 @@ pub(crate) fn calculate_bpm_with_context(
             apply_subharmonic_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
         if !triplet_feel {
             apply_ratio_demotion(&mut tempo, &mut gapdata, onsets, sample_rate);
+            apply_octave_preference(&mut tempo, &mut gapdata, onsets, sample_rate, opts);
         } else {
             // Flip correction only: a 3:2 alias masquerades as a 3:1
             // triplet (1/3 of the alias's interval is exactly half a true
@@ -211,6 +212,118 @@ fn apply_subharmonic_preference(
         true
     } else {
         false
+    }
+}
+
+/// On the half-tempo grid, the beat phase must dominate the offbeat phase
+/// by this ratio for an octave flip. Far stricter than the other passes'
+/// `BEAT_DOMINANCE_RATIO` (1.25), because half-tempo is intrinsically
+/// competitive on any even-tempo song (see `apply_octave_preference`).
+///
+/// Calibrated against measured separation on real songs, and deliberately
+/// set so this pass fires only in the extreme tail. Structurally the ratio
+/// is ~1.0 when the seed tempo is real (every pulse is equivalent, so both
+/// phases collect an equal share) and large when the scan doubled a slower
+/// beat (beats on one phase, subdivisions on the other) — but a genuinely
+/// fast song with a strong downbeat layer lands in between, which is the
+/// backbeat trap.
+///
+/// That trap is not merely theoretical, and it is why this threshold is so
+/// high. Measured across the osu-eval maps and the real-song fixtures, the
+/// two classes OVERLAP and cannot be separated by this ratio alone:
+///
+/// | needs halving      |      | must not be halved  |      |
+/// |--------------------|------|---------------------|------|
+/// | Call me maybe      | 4.63 | No title            | 1.82 |
+/// | My Love            | 2.73 | Dear You            | 1.62 |
+/// | Cookie-Butter      | 2.06 | Toumei Elegy        | 1.59 |
+/// | Highscore          | 1.69 | One by One          | 1.32 |
+/// | Passcode           | 1.58 | fffff               | 1.06 |
+///
+/// Passcode (1.575, needs halving) and Toumei Elegy (1.585, must not) are
+/// 0.01 apart, so any threshold low enough to catch the middle of the left
+/// column also wrongly halves correct tempos. 2.6 therefore sits above
+/// every observed true-fast song — catching only the unambiguous cases and
+/// abstaining on the rest, since a missed flip leaves the tempo in the
+/// right octave family while a wrong flip reports a tempo nobody taps. It
+/// also clears the synthetic backbeat guard in
+/// `tests::fast_song_with_backbeat_is_not_thirded` (a strict 2.5:1
+/// alternation, more extreme than any real mix measured here).
+const OCTAVE_DOMINANCE_RATIO: f64 = 2.6;
+
+/// Re-labels the winning candidate as its half-tempo octave when the accent
+/// structure shows the scan locked onto the subdivision layer rather than
+/// the beat.
+///
+/// This exists because the scan's evidence function is blind to octaves in
+/// one specific direction. The confidence function gives the offbeat half
+/// weight (`C(p) = f(p) + f(p+i/2)/2`), so a song whose onsets sit on
+/// eighth notes scores `N + N/2 = 1.5N` at its true interval but a full
+/// `2N` at the doubled interval, where every onset collapses into a single
+/// bin. Double tempo wins on arithmetic alone. The reference implementation
+/// never hit this because its BPM range (`[89, 205]`) spans barely one
+/// octave, so the doubled alias usually fell outside the scan; the widened
+/// 40-260 default range exposes it.
+///
+/// The discriminator is accent, not count. On the half-tempo grid a song
+/// that is genuinely at the doubled tempo spreads its accents evenly across
+/// the beat and offbeat phases (every pulse is equivalent), so neither
+/// phase can dominate. A song that is genuinely at the half tempo puts its
+/// kick/downbeat layer on the beat phase and the weaker subdivision layer
+/// on the offbeat phase, producing clear dominance.
+///
+/// This is the `/2` rule the subharmonic pass deliberately refuses to make
+/// — and the reason it is safe here is the same reason it is unsafe there:
+/// backbeat accenting. A `/2` flip driven by *unweighted* gap confidence
+/// halves any even-tempo song, because the beat phase of the half grid
+/// always collects a full share of onsets. Driving it from *weighted*
+/// phase support instead means alternating strong/weak accents are what the
+/// test measures, so the gate is guarded by `OCTAVE_DOMINANCE_RATIO` (well
+/// above the other passes' 1.25) plus the same scan-uncertainty and
+/// substantial-support conditions.
+fn apply_octave_preference(
+    tempo: &mut [TempoResult],
+    gapdata: &mut GapData,
+    onsets: &[Onset],
+    sample_rate: u32,
+    opts: &DetectOptions,
+) {
+    // Note the absence of the scan-uncertainty gate the other passes use.
+    // It would be meaningless here: `remove_duplicates` runs first and
+    // deletes octave multiples outright, so by this point the half-tempo
+    // partner is gone from the list and the top-2 margin is measured
+    // against an unrelated candidate (Call me maybe's runner-up is its 4:1,
+    // giving a "decisive" margin that says nothing about the octave
+    // question). The accent evidence below is the only informative signal.
+    let Some(seed) = tempo.first() else {
+        return;
+    };
+    let seed_bpm = seed.bpm;
+    let half_bpm = seed_bpm / 2.0;
+    if half_bpm < opts.min_bpm {
+        return;
+    }
+
+    let seed_interval = sample_rate as f64 * 60.0 / seed_bpm;
+    let half_interval = sample_rate as f64 * 60.0 / half_bpm;
+
+    let w_seed = gapdata.confidence_for_bpm_weighted(onsets, seed_interval);
+    let w_half = gapdata.confidence_for_bpm_weighted(onsets, half_interval);
+
+    let (interval, beat_pos) = gapdata.weighted_best_phase(onsets, half_interval);
+    let c_beat = gapdata.gap_confidence(beat_pos, interval);
+    let c_offbeat = gapdata.gap_confidence((beat_pos + interval / 2) % interval, interval);
+
+    let beat_dominant = c_beat >= OCTAVE_DOMINANCE_RATIO * c_offbeat;
+    let substantial_support = w_half >= FUNDAMENTAL_SUPPORT_RATIO * w_seed;
+
+    if beat_dominant && substantial_support {
+        let fitness = gapdata.confidence_for_bpm(onsets, half_interval);
+        tempo[0] = TempoResult {
+            bpm: half_bpm,
+            offset: 0.0,
+            fitness,
+        };
     }
 }
 

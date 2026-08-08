@@ -9,6 +9,11 @@
 //! median-adaptive-thresholded ODF, subject to a minimum inter-onset
 //! interval, become onsets, with sub-hop position refinement via parabolic
 //! interpolation of the ODF around each peak.
+//!
+//! The adaptive threshold follows the reference paper's §3.2.2 formula
+//! (`median(D(w)) + α⟨D(w)⟩` over `w = {n-5..n+1}`) rather than a
+//! multiplicative one — see `THRESHOLD_MEAN_WEIGHT` for why that distinction
+//! decides whether real music yields hundreds of onsets or almost none.
 
 use crate::Onset;
 use rustfft::num_complex::Complex64;
@@ -16,8 +21,29 @@ use rustfft::FftPlanner;
 
 const WINDOW_SIZE: usize = 1024;
 const HOP_SIZE: usize = WINDOW_SIZE / 4; // 256
-const MEDIAN_RADIUS: usize = 3; // 7-frame window for the adaptive median threshold
-const THRESHOLD_MULTIPLIER: f64 = 1.5;
+/// Adaptive-threshold window, per the reference paper's §3.2.2: the frames
+/// `{n-5, ..., n+1}` — deliberately asymmetric (five frames of history, one
+/// of lookahead), so the threshold is set mostly by what came *before* the
+/// candidate rather than by its own post-transient decay.
+const THRESHOLD_WINDOW_PRE: usize = 5;
+const THRESHOLD_WINDOW_POST: usize = 1;
+/// Weighting factor on the window mean in the threshold (`α` in the paper's
+/// `δt(n) = median(D(w)) + α⟨D(w)⟩`).
+///
+/// This additive form matters far more than it looks. The complex-domain ODF
+/// of real music sits on a large sustained baseline (spectral flux from
+/// held notes/reverb never returns to zero), and genuine transients rise
+/// only modestly above their local neighbourhood — measured across the
+/// regression fixtures, even the *loudest* transient in a track is often
+/// under 1.8x its local median, and on heavily-limited masters the maximum
+/// is ~1.5x. A multiplicative threshold (previously `median * 1.5`)
+/// therefore rejects almost every real onset: it yielded 1-60 onsets per
+/// 60s across the fixture set, and exactly 1 on a brickwalled master, which
+/// starved every downstream stage (BPM scan, offset phase, meter) and in the
+/// worst case tripped the "<2 onsets" fallback into reporting a fixed
+/// 100 BPM. The paper's additive form is ~1.1x the median when median ≈ mean,
+/// and recovers 450-550 onsets/60s uniformly across the same material.
+const THRESHOLD_MEAN_WEIGHT: f64 = 0.1;
 const ODF_FLOOR: f64 = 1e-6; // avoids picking noise as "peaks" in near-silent audio
 const MIN_INTER_ONSET_SECONDS: f64 = 0.02; // 20ms, matches aubio's default minimum inter-onset interval
 /// STFT-based onset detection has inherent analysis latency: the ODF only
@@ -139,7 +165,7 @@ fn hann_window(out: &mut [f64]) {
 /// the minimum-inter-onset filter (which still guards against separate,
 /// genuinely close-together onsets from different transients).
 fn pick_peaks(odf: &[f64], sample_rate: u32) -> Vec<Onset> {
-    if odf.len() < MEDIAN_RADIUS * 2 + 3 {
+    if odf.len() < THRESHOLD_WINDOW_PRE + THRESHOLD_WINDOW_POST + 3 {
         return Vec::new();
     }
 
@@ -152,17 +178,16 @@ fn pick_peaks(odf: &[f64], sample_rate: u32) -> Vec<Onset> {
     let mut last_onset_frame: Option<usize> = None;
 
     for n in 1..odf.len() - 1 {
-        // The adaptive threshold is computed from the *surrounding* context,
-        // excluding `odf[n]` itself: including the candidate sample would
-        // let a genuinely large peak inflate its own threshold (especially
-        // with the ODF's post-transient ringing keeping nearby frames
-        // elevated too), causing real onsets to fail their own threshold
-        // check.
-        let median_lo = n.saturating_sub(MEDIAN_RADIUS);
-        let median_hi = (n + MEDIAN_RADIUS + 1).min(odf.len());
-        let mut context: Vec<f64> = odf[median_lo..median_hi].to_vec();
-        context.remove(n - median_lo);
-        let threshold = median(&context) * THRESHOLD_MULTIPLIER + ODF_FLOOR;
+        // Adaptive threshold over the paper's asymmetric window (§3.2.2):
+        // `median(D(w)) + α⟨D(w)⟩`. The candidate frame is included in the
+        // window, as in the paper — with a 7-frame window a lone peak is the
+        // window maximum, so it barely shifts the median, and it moves the
+        // mean by only α/7 of its own height.
+        let window_lo = n.saturating_sub(THRESHOLD_WINDOW_PRE);
+        let window_hi = (n + THRESHOLD_WINDOW_POST + 1).min(odf.len());
+        let window = &odf[window_lo..window_hi];
+        let mean = window.iter().sum::<f64>() / window.len() as f64;
+        let threshold = median(window) + THRESHOLD_MEAN_WEIGHT * mean + ODF_FLOOR;
 
         let peak_lo = n.saturating_sub(peak_radius);
         let peak_hi = (n + peak_radius + 1).min(odf.len());
