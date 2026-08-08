@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { computePeaks, type Peaks } from "@/lib/waveform-peaks";
 import { BeatPlayer } from "@/lib/beat-player";
+import { persistOption, savedOr } from "@/lib/options-storage";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 
-const OVERVIEW_HEIGHT = 96;
-const DETAIL_HEIGHT = 128;
+// The overview is for navigation only, so it stays thin; the detail pane is
+// where alignment is actually judged and gets the vertical room.
+const OVERVIEW_HEIGHT = 56;
+const DETAIL_HEIGHT = 184;
 /** Detail window span. 2s across ~700px is ~3ms/px — fine enough to see the
  *  documented offset bias (+2ms..+27ms) as an actual gap. */
 const DETAIL_SPAN_S = 2;
@@ -139,7 +141,10 @@ export default function WaveformView({
   const [width, setWidth] = useState(0);
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [clickEnabled, setClickEnabled] = useState(true);
+  // Lazy initializer rather than a restore-on-mount effect: this component only
+  // ever mounts after an analysis completes, well past hydration, so reading
+  // localStorage during its first render can't cause a server/client mismatch.
+  const [volume, setVolume] = useState(() => savedOr("volume", 1));
   const { resolvedTheme } = useTheme();
 
   const duration = samples.length / sampleRate;
@@ -158,9 +163,15 @@ export default function WaveformView({
     player.setGrid(bpm, offset);
   }, [player, bpm, offset]);
 
+  // The click is the whole point of playback here, so it's always on; use the
+  // volume slider to pull the pair down.
   useEffect(() => {
-    player.setClickEnabled(clickEnabled);
-  }, [player, clickEnabled]);
+    player.setClickEnabled(true);
+  }, [player]);
+
+  useEffect(() => {
+    player.setVolume(volume);
+  }, [player, volume]);
 
   // Track the canvas width so peaks are recomputed on resize, not stretched.
   useEffect(() => {
@@ -279,9 +290,6 @@ export default function WaveformView({
     [player],
   );
 
-  const gridSpacingPx =
-    bpm > 0 && duration > 0 && width > 0 ? (60 / bpm / duration) * width : Infinity;
-
   return (
     <div ref={containerRef} className="flex flex-col gap-2">
       <canvas
@@ -313,20 +321,24 @@ export default function WaveformView({
           {formatTime(startSeconds + playhead)} / {formatTime(startSeconds + duration)}
         </span>
         <div className="flex items-center gap-1.5">
-          <Checkbox
-            id="waveform-click"
-            checked={clickEnabled}
-            onCheckedChange={(checked) => setClickEnabled(checked === true)}
-          />
-          <Label htmlFor="waveform-click" className="text-xs font-normal">
-            Click track
+          <Label htmlFor="waveform-volume" className="text-xs font-normal">
+            Volume
           </Label>
+          <input
+            id="waveform-volume"
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setVolume(v);
+              persistOption("volume", v);
+            }}
+            className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-border accent-foreground"
+          />
         </div>
-        <span>
-          {gridSpacingPx < MIN_GRID_SPACING_PX
-            ? "Beat grid hidden in the overview at this zoom — see the detail pane below."
-            : "Detail pane shows 2s around the playhead."}
-        </span>
       </div>
     </div>
   );

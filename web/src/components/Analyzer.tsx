@@ -4,45 +4,23 @@ import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from 
 import { decodeToMono, type DecodedAudio } from "@/lib/decode-audio";
 import { analyzeAudio, type AnalyzeResult } from "@/lib/tempo-wasm";
 import WaveformView from "@/components/WaveformView";
+import { loadSavedOptions, persistOption } from "@/lib/options-storage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// Note the last sentence: the correction passes in bpm.rs promote a candidate
+// by position without rewriting its fitness, so the top row legitimately shows
+// a lower number than the row beneath it. Without saying so, the table reads
+// like a sorting bug.
+const FITNESS_HELP =
+  "How sharply onsets line up on this tempo's grid — higher is a cleaner fit. " +
+  "The scale is arbitrary, so only compare rows within one song, not between songs. " +
+  "The top candidate can show a lower fitness when a correction pass overrode the raw score.";
+
 function formatOffset(seconds: number): string {
   return `${Math.round(seconds * 1000)}ms`;
-}
-
-const OPTIONS_STORAGE_KEY = "tempo-detector-options";
-
-interface SavedOptions {
-  minBpm: number;
-  maxBpm: number;
-  subharmonicPreference: boolean;
-  start: number;
-  duration: number;
-}
-
-function loadSavedOptions(): Partial<SavedOptions> {
-  try {
-    const raw = localStorage.getItem(OPTIONS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Partial<SavedOptions>) : {};
-  } catch {
-    return {};
-  }
-}
-
-// Persists imperatively from each onChange rather than reactively off state
-// (a `useEffect` keyed on the option values would also fire once on mount,
-// racing the mount-time restore below and clobbering it with stale
-// defaults — reliably, since React 18 Strict Mode double-invokes effects
-// in dev).
-function persistOption<K extends keyof SavedOptions>(key: K, value: SavedOptions[K]) {
-  try {
-    localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify({ ...loadSavedOptions(), [key]: value }));
-  } catch {
-    // Storage unavailable (private browsing, quota, etc.) — not persisted.
-  }
 }
 
 export default function Analyzer() {
@@ -284,7 +262,20 @@ export default function Analyzer() {
               <tr className="border-b border-border text-left">
                 <th className="py-1 pr-4 font-medium">BPM</th>
                 <th className="py-1 pr-4 font-medium">Offset</th>
-                <th className="py-1 font-medium">Fitness</th>
+                <th className="py-1 font-medium">
+                  Fitness
+                  <span
+                    // Native title rather than a tooltip component: this is the
+                    // only tooltip in the app, and it works on touch-and-hold
+                    // and with a screen reader without pulling in a primitive.
+                    tabIndex={0}
+                    title={FITNESS_HELP}
+                    aria-label={FITNESS_HELP}
+                    className="ml-1 cursor-help rounded-full border border-border px-1 text-[10px] font-normal text-muted-foreground"
+                  >
+                    ?
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>

@@ -11,11 +11,18 @@ const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD_S = 0.15;
 const CLICK_FREQ_HZ = 1000;
 const CLICK_DURATION_S = 0.03;
+/** Peak of the click envelope. Deliberately loud relative to the music: the
+ *  click has to stay audible over a dense mix to be usable for judging offset. */
+const CLICK_PEAK_GAIN = 1.0;
 
 export class BeatPlayer {
   private ctx: AudioContext | null = null;
   private buffer: AudioBuffer | null = null;
   private source: AudioBufferSourceNode | null = null;
+  /** Master gain. Both the music and the metronome route through it, so the
+   *  slider moves them together and their relative balance never changes. */
+  private outputGain: GainNode | null = null;
+  private volume = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   private pendingSamples: { samples: Float32Array; sampleRate: number } | null = null;
@@ -72,6 +79,28 @@ export class BeatPlayer {
     if (!this.playing || !this.ctx) return this.pausedAt;
     const t = this.startedAtMediaTime + (this.ctx.currentTime - this.startedAtContextTime);
     return Math.min(t, this.duration);
+  }
+
+  /** Output volume for music and metronome alike, 0..1. Takes effect
+   *  immediately, mid-playback. */
+  setVolume(volume: number) {
+    this.volume = Math.max(0, Math.min(1, volume));
+    if (this.outputGain && this.ctx) {
+      // Short ramp rather than a step: an instant gain change on a running
+      // buffer is an audible zipper click.
+      this.outputGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.01);
+    }
+  }
+
+  /** Lazily built so the whole graph is created inside the first user gesture,
+   *  alongside the AudioContext itself. */
+  private output(ctx: AudioContext): GainNode {
+    if (!this.outputGain) {
+      this.outputGain = ctx.createGain();
+      this.outputGain.gain.value = this.volume;
+      this.outputGain.connect(ctx.destination);
+    }
+    return this.outputGain;
   }
 
   setGrid(bpm: number, offset: number) {
@@ -141,6 +170,8 @@ export class BeatPlayer {
     this.playing = false;
     this.buffer = null;
     this.pendingSamples = null;
+    this.outputGain?.disconnect();
+    this.outputGain = null;
     const ctx = this.ctx;
     this.ctx = null;
     void ctx?.close().catch(() => {
@@ -153,7 +184,7 @@ export class BeatPlayer {
     if (!ctx || !this.buffer) return;
     const src = ctx.createBufferSource();
     src.buffer = this.buffer;
-    src.connect(ctx.destination);
+    src.connect(this.output(ctx));
     src.onended = () => {
       // Only a natural end should reset transport state; stopSource() detaches
       // this handler first so seeks and pauses don't trip it.
@@ -229,9 +260,9 @@ export class BeatPlayer {
     // Short exponential decay: an unshaped gate on a 1kHz sine clicks at both
     // edges and smears the very transient we're trying to line up against.
     gain.gain.setValueAtTime(0.0001, when);
-    gain.gain.exponentialRampToValueAtTime(0.6, when + 0.001);
+    gain.gain.exponentialRampToValueAtTime(CLICK_PEAK_GAIN, when + 0.001);
     gain.gain.exponentialRampToValueAtTime(0.0001, when + CLICK_DURATION_S);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(this.output(ctx));
     osc.start(when);
     osc.stop(when + CLICK_DURATION_S + 0.01);
   }
