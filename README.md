@@ -2,7 +2,7 @@
 
 A cross-platform, GPL-3.0-licensed reimplementation of the tempo/BPM and beat-
 offset detection algorithm documented in
-[`doc/syslab-version/paper.tex`](original/doc/syslab-version/paper.tex) and
+[`doc/syslab-version/paper.pdf`](https://github.com/nathanstep55/bpm-offset-detector/blob/main/doc/syslab-version/paper.pdf) and
 originally implemented in [`FindTempo_standalone.cpp`](original/FindTempo_standalone.cpp)
 (also GPL, depends on `aubio`).
 
