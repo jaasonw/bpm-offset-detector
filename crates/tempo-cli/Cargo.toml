@@ -1,0 +1,17 @@
+[package]
+name = "tempo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tempo-core = { path = "../tempo-core" }
+symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "vorbis", "aac", "isomp4"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+csv = "1"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+serde_json = "1"

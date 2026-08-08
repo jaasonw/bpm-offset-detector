@@ -1,0 +1,9 @@
+[package]
+name = "tempo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure tempo/BPM/offset detection algorithm (van de Wetering method), no I/O dependencies."
+
+[dependencies]
+rustfft = "6"
