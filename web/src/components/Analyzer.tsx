@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from "react";
-import { decodeToMono } from "@/lib/decode-audio";
+import { decodeToMono, type DecodedAudio } from "@/lib/decode-audio";
 import { analyzeAudio, type AnalyzeResult } from "@/lib/tempo-wasm";
+import WaveformView from "@/components/WaveformView";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,13 @@ export default function Analyzer() {
   );
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  // Kept so the waveform view draws exactly the PCM that was analyzed — the
+  // returned offsets are relative to this slice, not to the source file.
+  const [decoded, setDecoded] = useState<DecodedAudio | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Bumped per completed analysis and used as WaveformView's key, so a new
+  // file gets a fresh player and transport rather than an in-place reset.
+  const [runId, setRunId] = useState(0);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,9 +87,12 @@ export default function Analyzer() {
       setCurrentFile(file);
       setError(null);
       setResult(null);
+      setDecoded(null);
+      setSelectedIndex(0);
       try {
         setStatus("decoding");
-        const { samples, sampleRate } = await decodeToMono(file, start, duration);
+        const decodedAudio = await decodeToMono(file, start, duration);
+        const { samples, sampleRate } = decodedAudio;
         if (samples.length === 0) {
           throw new Error("Decoded to zero samples — check the start/duration range.");
         }
@@ -92,6 +103,8 @@ export default function Analyzer() {
           subharmonicPreference,
         });
         setResult(out);
+        setDecoded(decodedAudio);
+        setRunId((n) => n + 1);
         setStatus("done");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -278,15 +291,44 @@ export default function Analyzer() {
               {result.results.map((r, i) => (
                 <tr
                   key={i}
-                  className={i === 0 ? "font-semibold text-foreground" : "text-muted-foreground"}
+                  aria-selected={i === selectedIndex}
+                  tabIndex={0}
+                  onClick={() => setSelectedIndex(i)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedIndex(i);
+                    }
+                  }}
+                  className={`cursor-pointer outline-none ${
+                    i === selectedIndex
+                      ? "bg-accent font-semibold text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50"
+                  }`}
                 >
-                  <td className="py-1 pr-4">{r.bpm.toFixed(2)}</td>
+                  <td className="py-1 pr-4">
+                    {r.bpm.toFixed(2)}
+                    {/* Ranking is a separate signal from selection — the top
+                        candidate stays marked even while inspecting another. */}
+                    {i === 0 && <span className="ml-1.5 text-xs font-normal">(top)</span>}
+                  </td>
                   <td className="py-1 pr-4">{formatOffset(r.offset)}</td>
                   <td className="py-1">{r.fitness.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {decoded && result.results[selectedIndex] && (
+            <WaveformView
+              key={runId}
+              samples={decoded.samples}
+              sampleRate={decoded.sampleRate}
+              startSeconds={start}
+              bpm={result.results[selectedIndex].bpm}
+              offset={result.results[selectedIndex].offset}
+            />
+          )}
 
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Known limitations</summary>
