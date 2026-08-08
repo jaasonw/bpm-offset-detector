@@ -1,15 +1,14 @@
 "use client";
 
-import { useCallback, useRef, useState, type DragEvent } from "react";
+import { useCallback, useId, useRef, useState, type DragEvent } from "react";
 import { decodeToMono } from "@/lib/decode-audio";
 import { analyzeAudio, type AnalyzeResult } from "@/lib/tempo-wasm";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function formatOffset(seconds: number): string {
-  const sign = seconds < 0 ? "-" : "";
-  const abs = Math.abs(seconds);
-  const m = Math.floor(abs / 60);
-  const s = (abs % 60).toFixed(3).padStart(6, "0");
-  return `${sign}${m}:${s}`;
+  return `${Math.round(seconds * 1000)}ms`;
 }
 
 export default function Analyzer() {
@@ -26,6 +25,7 @@ export default function Analyzer() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fieldId = useId();
 
   const runAnalysis = useCallback(
     async (file: File) => {
@@ -67,7 +67,7 @@ export default function Analyzer() {
   );
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-6">
+    <div className="flex w-full max-w-2xl flex-col gap-3">
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -78,10 +78,8 @@ export default function Analyzer() {
         onClick={() => fileInputRef.current?.click()}
         role="button"
         tabIndex={0}
-        className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-12 text-center transition-colors ${
-          dragActive
-            ? "border-zinc-900 bg-zinc-100 dark:border-zinc-100 dark:bg-zinc-900"
-            : "border-zinc-300 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-600"
+        className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+          dragActive ? "border-foreground bg-muted" : "border-border hover:border-foreground/40"
         }`}
       >
         <input
@@ -96,84 +94,93 @@ export default function Analyzer() {
           }}
         />
         {busy ? (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             {status === "decoding" ? "Decoding..." : "Analyzing..."} {fileName}
           </p>
         ) : (
           <>
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <p className="text-sm font-medium text-foreground">
               Drop an audio file here, or click to choose one
             </p>
-            <p className="text-xs text-zinc-500">mp3, wav, flac, ogg, m4a, aac</p>
+            <p className="text-xs text-muted-foreground">mp3, wav, flac, ogg, m4a, aac</p>
           </>
         )}
       </div>
 
-      <details className="rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-        <summary className="cursor-pointer font-medium text-zinc-700 dark:text-zinc-300">
-          Options
-        </summary>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">Min BPM</span>
-            <input
+      <details className="rounded-lg border border-border p-2.5 text-sm">
+        <summary className="cursor-pointer font-medium text-foreground">Options</summary>
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`${fieldId}-min-bpm`} className="text-xs text-muted-foreground">
+              Min BPM
+            </Label>
+            <Input
+              id={`${fieldId}-min-bpm`}
               type="number"
               value={minBpm}
               onChange={(e) => setMinBpm(Number(e.target.value))}
-              className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">Max BPM</span>
-            <input
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`${fieldId}-max-bpm`} className="text-xs text-muted-foreground">
+              Max BPM
+            </Label>
+            <Input
+              id={`${fieldId}-max-bpm`}
               type="number"
               value={maxBpm}
               onChange={(e) => setMaxBpm(Number(e.target.value))}
-              className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">Start (sec)</span>
-            <input
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`${fieldId}-start`} className="text-xs text-muted-foreground">
+              Start (sec)
+            </Label>
+            <Input
+              id={`${fieldId}-start`}
               type="number"
               value={start}
               onChange={(e) => setStart(Number(e.target.value))}
-              className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">Duration (sec)</span>
-            <input
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`${fieldId}-duration`} className="text-xs text-muted-foreground">
+              Duration (sec)
+            </Label>
+            <Input
+              id={`${fieldId}-duration`}
               type="number"
               value={duration}
               onChange={(e) => setDuration(Number(e.target.value))}
-              className="rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
             />
-          </label>
-          <label className="col-span-2 flex items-center gap-2">
-            <input
-              type="checkbox"
+          </div>
+          <div className="col-span-2 flex items-center gap-2">
+            <Checkbox
+              id={`${fieldId}-subharmonic`}
               checked={subharmonicPreference}
-              onChange={(e) => setSubharmonicPreference(e.target.checked)}
+              onCheckedChange={(checked) => setSubharmonicPreference(checked === true)}
             />
-            <span className="text-xs text-zinc-500">
+            <Label
+              htmlFor={`${fieldId}-subharmonic`}
+              className="text-xs font-normal text-muted-foreground"
+            >
               Subharmonic preference (fixes triplet-feel songs reported at 3x tempo)
-            </span>
-          </label>
+            </Label>
+          </div>
         </div>
       </details>
 
       {error && (
-        <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </p>
       )}
 
       {result && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-zinc-300 text-left dark:border-zinc-700">
+              <tr className="border-b border-border text-left">
                 <th className="py-1 pr-4 font-medium">BPM</th>
                 <th className="py-1 pr-4 font-medium">Offset</th>
                 <th className="py-1 font-medium">Fitness</th>
@@ -183,11 +190,7 @@ export default function Analyzer() {
               {result.results.map((r, i) => (
                 <tr
                   key={i}
-                  className={
-                    i === 0
-                      ? "font-semibold text-zinc-900 dark:text-zinc-50"
-                      : "text-zinc-600 dark:text-zinc-400"
-                  }
+                  className={i === 0 ? "font-semibold text-foreground" : "text-muted-foreground"}
                 >
                   <td className="py-1 pr-4">{r.bpm.toFixed(2)}</td>
                   <td className="py-1 pr-4">{formatOffset(r.offset)}</td>
@@ -197,7 +200,7 @@ export default function Analyzer() {
             </tbody>
           </table>
 
-          <details className="text-xs text-zinc-500">
+          <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Known limitations</summary>
             <ul className="mt-2 list-disc pl-4">
               <li>
