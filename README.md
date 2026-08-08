@@ -1,4 +1,4 @@
-# tempo (Rust implementation)
+# tempo
 
 A cross-platform, GPL-3.0-licensed reimplementation of the tempo/BPM and beat-
 offset detection algorithm documented in
@@ -21,12 +21,15 @@ The original C++/Python research code this reimplements lives in
 - **`crates/tempo-core`**: the pure algorithm. No file I/O, no threads, no
   platform dependencies beyond `rustfft` — takes mono `f32` PCM samples and a
   sample rate, returns BPM/offset/fitness candidates. This boundary is what
-  makes a future WebAssembly build (via `wasm-bindgen`) straightforward: the
-  web version would decode audio with the Web Audio API in JavaScript and
-  hand the PCM buffer to this crate compiled to WASM.
+  let it compile to `wasm32-unknown-unknown` with zero changes.
 - **`crates/tempo-cli`**: the native command-line tool. Decodes audio files
   with `symphonia` (pure Rust — no system libraries, unlike `aubio`) and
   calls into `tempo-core`.
+- **`crates/tempo-wasm`**: wasm-bindgen bindings around `tempo-core`, for
+  browser use.
+- **`web/`**: a Next.js app that decodes audio with the Web Audio API and
+  runs analysis entirely client-side via the compiled WASM module — see
+  [Web UI](#web-ui) below.
 
 ## Building
 
@@ -98,6 +101,29 @@ Features beyond the reference C++ implementation:
 - **Gapless decoding**: MP3 encoder delay/padding is trimmed, so reported
   offsets line up with the original source audio instead of being shifted
   late by 25-50ms.
+
+## Web UI
+
+Drop an audio file in, get BPM/offset back. Analysis runs entirely
+client-side via the WASM build of `tempo-core` — files never leave the
+browser, no server involved. Doesn't surface meter estimation (accuracy
+hasn't held up well enough); the CLI still reports it.
+
+```sh
+cd web
+npm install
+npm run wasm:build   # builds crates/tempo-wasm, copies output into public/wasm/
+npm run dev
+```
+
+`web/public/wasm/*` is a **committed build artifact**, not built at deploy
+time — Vercel's build image has no Rust toolchain. Re-run `npm run
+wasm:build` and commit the output whenever `tempo-core`/`tempo-wasm`
+changes. See [`web/README.md`](web/README.md) for details.
+
+To deploy: set the Vercel project's root directory to `web`. No
+environment variables or serverless functions needed — it's a fully
+static site.
 
 ## Testing
 
@@ -178,6 +204,12 @@ Every part of the algorithm is a faithful (if idiomatically-Rust) port of
   least-squares normal equations as the reference's `polyfit.h`, but via
   Gaussian elimination on a fixed 4x4 system instead of a general
   Givens-rotation QR decomposition (simpler to implement/verify for a fixed
-  degree-3 fit; `polyfit.h` is also explicitly unlicensed in this
-  repository's `README.md`, so this module is written from the underlying
-  math rather than translated from it).
+  degree-3 fit; `polyfit.h` is also explicitly unlicensed per
+  [`original/README.md`](original/README.md), so this module is written
+  from the underlying math rather than translated from it).
+
+## License
+
+GPL-3.0 (see [`LICENSE`](LICENSE)). The original C++/Python research code
+in [`original/`](original/) is also GPL-3.0 (its own
+[`LICENSE`](original/LICENSE)).
