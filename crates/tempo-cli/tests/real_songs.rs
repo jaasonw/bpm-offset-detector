@@ -19,8 +19,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 
-/// Workspace root (`rust/`), where the real-song fixtures live.
-const SONGS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+/// Repo root's `fixtures/` directory, where the real-song fixtures live.
+const SONGS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures");
 
 /// BPM tolerance: ground truths are round numbers; the detector snaps
 /// near-integers, so anything within half a BPM is the same answer.

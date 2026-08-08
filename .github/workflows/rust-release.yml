@@ -45,14 +45,13 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build tempo-cli
-        working-directory: rust
         run: cargo build --release --target ${{ matrix.target }} -p tempo-cli
 
       - name: Stage artifact
         shell: bash
         run: |
           mkdir -p dist
-          cp rust/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

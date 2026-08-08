@@ -484,8 +484,9 @@ Thumbs.db
 
 # End of https://www.toptal.com/developers/gitignore/api/python,latex,c++
 # Real-song test fixtures (copyrighted, not committed; tests skip when absent)
-rust/*.mp3
+/fixtures/*
+!/fixtures/.gitkeep
 
 # osu! beatmap ground-truth folder for osu-eval (bundles copyrighted audio)
-rust/osu-maps/*
-!rust/osu-maps/.gitkeep
+/osu-maps/*
+!/osu-maps/.gitkeep
