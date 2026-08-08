@@ -29,7 +29,7 @@ export default function Home() {
           </a>
           , based on{" "}
           <a
-            href="https://github.com/jaasonw/bpm-offset-detector/blob/main/original/doc/syslab-version/paper.pdf"
+            href="https://github.com/nathanstep55/bpm-offset-detector/blob/main/doc/syslab-version/paper.pdf"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-foreground"
