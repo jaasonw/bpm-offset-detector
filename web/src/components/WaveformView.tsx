@@ -6,6 +6,7 @@ import { computePeaks, type Peaks } from "@/lib/waveform-peaks";
 import { BeatPlayer } from "@/lib/beat-player";
 import { persistOption, savedOr } from "@/lib/options-storage";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 // The overview is for navigation only, so it stays thin; the detail pane is
@@ -31,6 +32,13 @@ interface Props {
   bpm: number;
   /** Seconds from the start of the analyzed slice. */
   offset: number;
+}
+
+/** Keeps custom BPM/offset editable while never letting them go non-finite or
+ *  negative BPM, which would divide-by-zero or invert the click scheduler. */
+function clampBpm(bpm: number): number {
+  if (!Number.isFinite(bpm) || bpm <= 0) return 1;
+  return bpm;
 }
 
 interface Palette {
@@ -147,6 +155,24 @@ export default function WaveformView({
   const [volume, setVolume] = useState(() => savedOr("volume", 1));
   const { resolvedTheme } = useTheme();
 
+  // Editable overrides, seeded from the selected candidate. Kept separate from
+  // the `bpm`/`offset` props so switching candidates resets them, but typing
+  // in the boxes (or hitting 2x/0.5x) doesn't fight the prop on every render.
+  const [customBpm, setCustomBpm] = useState(bpm);
+  const [customOffset, setCustomOffset] = useState(offset);
+  const [bpmInput, setBpmInput] = useState(() => bpm.toFixed(2));
+  const [offsetInput, setOffsetInput] = useState(() => (offset * 1000).toFixed(1));
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- resetting the
+       override on a genuine candidate switch, not syncing derived state */
+    setCustomBpm(bpm);
+    setCustomOffset(offset);
+    setBpmInput(bpm.toFixed(2));
+    setOffsetInput((offset * 1000).toFixed(1));
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [bpm, offset]);
+
   const duration = samples.length / sampleRate;
 
   // One player per mounted view. The caller remounts this component (via
@@ -160,8 +186,43 @@ export default function WaveformView({
   }, [player, samples, sampleRate]);
 
   useEffect(() => {
-    player.setGrid(bpm, offset);
-  }, [player, bpm, offset]);
+    player.setGrid(customBpm, customOffset);
+  }, [player, customBpm, customOffset]);
+
+  const applyBpm = useCallback((next: number) => {
+    const clamped = clampBpm(next);
+    setCustomBpm(clamped);
+    setBpmInput(clamped.toFixed(2));
+  }, []);
+
+  const applyOffsetMs = useCallback((ms: number) => {
+    const safeMs = Number.isFinite(ms) ? ms : 0;
+    setCustomOffset(safeMs / 1000);
+    setOffsetInput(safeMs.toFixed(1));
+  }, []);
+
+  /** Applies whatever the field currently parses to, without touching the
+   *  field's text — reformatting mid-keystroke (e.g. "120." -> "120") would
+   *  fight the user's cursor. Silently no-ops on an unparseable/incomplete
+   *  value (empty, "-", "1.") until it becomes valid. */
+  const handleBpmInput = useCallback((raw: string) => {
+    setBpmInput(raw);
+    const parsed = parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed > 0) setCustomBpm(parsed);
+  }, []);
+
+  const handleOffsetInput = useCallback((raw: string) => {
+    setOffsetInput(raw);
+    const parsed = parseFloat(raw);
+    if (Number.isFinite(parsed)) setCustomOffset(parsed / 1000);
+  }, []);
+
+  const resetToDetected = useCallback(() => {
+    setCustomBpm(bpm);
+    setCustomOffset(offset);
+    setBpmInput(bpm.toFixed(2));
+    setOffsetInput((offset * 1000).toFixed(1));
+  }, [bpm, offset]);
 
   // The click is the whole point of playback here, so it's always on; use the
   // volume slider to pull the pair down.
@@ -212,7 +273,7 @@ export default function WaveformView({
         ov.ctx.fillRect(wx, 0, ww, ov.height);
       }
       drawPeaks(ov.ctx, overviewPeaks, ov.width, ov.height, palette.wave);
-      drawGrid(ov.ctx, ov.width, ov.height, bpm, offset, 0, duration);
+      drawGrid(ov.ctx, ov.width, ov.height, customBpm, customOffset, 0, duration);
       if (duration > 0) {
         ov.ctx.strokeStyle = PLAYHEAD_COLOR;
         ov.ctx.lineWidth = 1;
@@ -233,7 +294,7 @@ export default function WaveformView({
         Math.ceil(to * sampleRate),
       );
       drawPeaks(dt.ctx, peaks, dt.width, dt.height, palette.wave);
-      drawGrid(dt.ctx, dt.width, dt.height, bpm, offset, from, to);
+      drawGrid(dt.ctx, dt.width, dt.height, customBpm, customOffset, from, to);
       dt.ctx.strokeStyle = PLAYHEAD_COLOR;
       dt.ctx.lineWidth = 1;
       dt.ctx.beginPath();
@@ -242,7 +303,7 @@ export default function WaveformView({
       dt.ctx.lineTo(hx, dt.height);
       dt.ctx.stroke();
     }
-  }, [overviewPeaks, samples, sampleRate, duration, bpm, offset, player]);
+  }, [overviewPeaks, samples, sampleRate, duration, customBpm, customOffset, player]);
 
   // Redraw on any static change (grid, size, theme, seek).
   useEffect(() => {
@@ -278,6 +339,30 @@ export default function WaveformView({
       void player.play().then(() => setPlaying(player.isPlaying));
     }
   }, [player]);
+
+  // Spacebar toggles playback from anywhere on the page, matching every other
+  // media player's convention — except while the user is actually typing
+  // (an input/textarea/contenteditable, or the BPM/offset form), where space
+  // has to reach the field instead of hijacking it.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      togglePlay();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [togglePlay]);
 
   const seekFromEvent = useCallback(
     (clientX: number, el: HTMLElement, fromTime: number, span: number) => {
@@ -338,6 +423,102 @@ export default function WaveformView({
             }}
             className="h-1 w-24 cursor-pointer appearance-none rounded-full bg-border accent-foreground"
           />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-lg border border-border p-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="waveform-bpm" className="text-xs font-normal">
+              BPM
+            </Label>
+            <Input
+              id="waveform-bpm"
+              type="number"
+              inputMode="decimal"
+              step={0.01}
+              min={1}
+              value={bpmInput}
+              onChange={(e) => handleBpmInput(e.target.value)}
+              className="h-6 w-20 px-1.5 py-0 text-xs"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="waveform-offset" className="text-xs font-normal">
+              Offset (ms)
+            </Label>
+            <Input
+              id="waveform-offset"
+              type="number"
+              inputMode="decimal"
+              step={1}
+              value={offsetInput}
+              onChange={(e) => handleOffsetInput(e.target.value)}
+              className="h-6 w-20 px-1.5 py-0 text-xs"
+            />
+          </div>
+          {(customBpm !== bpm || customOffset !== offset) && (
+            <Button type="button" variant="outline" size="xs" onClick={resetToDetected}>
+              Reset to detected
+            </Button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-normal">BPM</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyBpm(customBpm * 0.5)}
+            >
+              0.5x
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyBpm(customBpm * 2)}
+            >
+              2x
+            </Button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-normal">Offset</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyOffsetMs(customOffset * 1000 - 10)}
+            >
+              -10ms
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyOffsetMs(customOffset * 1000 - 1)}
+            >
+              -1ms
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyOffsetMs(customOffset * 1000 + 1)}
+            >
+              +1ms
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => applyOffsetMs(customOffset * 1000 + 10)}
+            >
+              +10ms
+            </Button>
+          </div>
         </div>
       </div>
     </div>

@@ -7,7 +7,7 @@ export default function Home() {
       <main className="flex w-full max-w-2xl flex-col items-center gap-3">
         <div className="flex flex-col items-center gap-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            BPM &amp; Offset Detector
+            BPM &amp; Offset Analyzer
           </h1>
           <p className="max-w-none text-sm text-muted-foreground sm:whitespace-nowrap">
             Upload an audio file to detect bpm and offset. Analysis runs entirely in your
