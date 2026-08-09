@@ -201,6 +201,22 @@ export default function WaveformView({
     setOffsetInput(safeMs.toFixed(1));
   }, []);
 
+  /** Applies whatever the field currently parses to, without touching the
+   *  field's text — reformatting mid-keystroke (e.g. "120." -> "120") would
+   *  fight the user's cursor. Silently no-ops on an unparseable/incomplete
+   *  value (empty, "-", "1.") until it becomes valid. */
+  const handleBpmInput = useCallback((raw: string) => {
+    setBpmInput(raw);
+    const parsed = parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed > 0) setCustomBpm(parsed);
+  }, []);
+
+  const handleOffsetInput = useCallback((raw: string) => {
+    setOffsetInput(raw);
+    const parsed = parseFloat(raw);
+    if (Number.isFinite(parsed)) setCustomOffset(parsed / 1000);
+  }, []);
+
   const resetToDetected = useCallback(() => {
     setCustomBpm(bpm);
     setCustomOffset(offset);
@@ -410,15 +426,7 @@ export default function WaveformView({
         </div>
       </div>
 
-      <form
-        className="flex flex-col gap-2 rounded-lg border border-border p-2 text-xs text-muted-foreground"
-        onSubmit={(e) => {
-          e.preventDefault();
-          applyBpm(parseFloat(bpmInput));
-          applyOffsetMs(parseFloat(offsetInput));
-          (document.activeElement as HTMLElement | null)?.blur();
-        }}
-      >
+      <div className="flex flex-col gap-2 rounded-lg border border-border p-2 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5">
             <Label htmlFor="waveform-bpm" className="text-xs font-normal">
@@ -431,7 +439,7 @@ export default function WaveformView({
               step={0.01}
               min={1}
               value={bpmInput}
-              onChange={(e) => setBpmInput(e.target.value)}
+              onChange={(e) => handleBpmInput(e.target.value)}
               className="h-6 w-20 px-1.5 py-0 text-xs"
             />
           </div>
@@ -445,13 +453,10 @@ export default function WaveformView({
               inputMode="decimal"
               step={1}
               value={offsetInput}
-              onChange={(e) => setOffsetInput(e.target.value)}
+              onChange={(e) => handleOffsetInput(e.target.value)}
               className="h-6 w-20 px-1.5 py-0 text-xs"
             />
           </div>
-          <Button type="submit" variant="outline" size="xs">
-            Apply
-          </Button>
           {(customBpm !== bpm || customOffset !== offset) && (
             <Button type="button" variant="outline" size="xs" onClick={resetToDetected}>
               Reset to detected
@@ -515,7 +520,7 @@ export default function WaveformView({
             </Button>
           </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
