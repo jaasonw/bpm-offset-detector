@@ -29,6 +29,13 @@ export default function Analyzer() {
   const [subharmonicPreference, setSubharmonicPreference] = useState(true);
   const [start, setStart] = useState(0);
   const [duration, setDuration] = useState(60);
+  // Mirrors the committed numbers above as free-typed text: a controlled
+  // number input that snaps an emptied field back to "0" makes it impossible
+  // to clear and retype, so these stay uncommitted strings until blur/submit.
+  const [minBpmInput, setMinBpmInput] = useState(() => String(minBpm));
+  const [maxBpmInput, setMaxBpmInput] = useState(() => String(maxBpm));
+  const [startInput, setStartInput] = useState(() => String(start));
+  const [durationInput, setDurationInput] = useState(() => String(duration));
   const [status, setStatus] = useState<"idle" | "decoding" | "analyzing" | "done" | "error">(
     "idle",
   );
@@ -51,17 +58,64 @@ export default function Analyzer() {
   // the server-rendered markup).
   useEffect(() => {
     const saved = loadSavedOptions();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (typeof saved.minBpm === "number") setMinBpm(saved.minBpm);
-    if (typeof saved.maxBpm === "number") setMaxBpm(saved.maxBpm);
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (typeof saved.minBpm === "number") {
+      setMinBpm(saved.minBpm);
+      setMinBpmInput(String(saved.minBpm));
+    }
+    if (typeof saved.maxBpm === "number") {
+      setMaxBpm(saved.maxBpm);
+      setMaxBpmInput(String(saved.maxBpm));
+    }
     if (typeof saved.subharmonicPreference === "boolean")
       setSubharmonicPreference(saved.subharmonicPreference);
-    if (typeof saved.start === "number") setStart(saved.start);
-    if (typeof saved.duration === "number") setDuration(saved.duration);
+    if (typeof saved.start === "number") {
+      setStart(saved.start);
+      setStartInput(String(saved.start));
+    }
+    if (typeof saved.duration === "number") {
+      setDuration(saved.duration);
+      setDurationInput(String(saved.duration));
+    }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
+  /** Parses the free-typed option fields, falling back to the last committed
+   *  number for anything unparseable (e.g. emptied mid-edit), and pushes both
+   *  the committed state and its text mirror back in sync. Returns the parsed
+   *  values directly so a caller doesn't have to wait a render for state to
+   *  catch up before starting an analysis with them. */
+  const commitOptions = useCallback(() => {
+    const commit = (
+      raw: string,
+      current: number,
+      setNum: (v: number) => void,
+      setStr: (v: string) => void,
+      key: "minBpm" | "maxBpm" | "start" | "duration",
+    ) => {
+      const parsed = parseFloat(raw);
+      const next = Number.isFinite(parsed) ? parsed : current;
+      setNum(next);
+      setStr(String(next));
+      persistOption(key, next);
+      return next;
+    };
+    return {
+      minBpm: commit(minBpmInput, minBpm, setMinBpm, setMinBpmInput, "minBpm"),
+      maxBpm: commit(maxBpmInput, maxBpm, setMaxBpm, setMaxBpmInput, "maxBpm"),
+      start: commit(startInput, start, setStart, setStartInput, "start"),
+      duration: commit(durationInput, duration, setDuration, setDurationInput, "duration"),
+    };
+  }, [minBpmInput, maxBpmInput, startInput, durationInput, minBpm, maxBpm, start, duration]);
+
   const runAnalysis = useCallback(
-    async (file: File) => {
+    async (file: File, opts?: { minBpm: number; maxBpm: number; start: number; duration: number }) => {
+      const { minBpm: mn, maxBpm: mx, start: st, duration: du } = opts ?? {
+        minBpm,
+        maxBpm,
+        start,
+        duration,
+      };
       setCurrentFile(file);
       setError(null);
       setResult(null);
@@ -69,15 +123,15 @@ export default function Analyzer() {
       setSelectedIndex(0);
       try {
         setStatus("decoding");
-        const decodedAudio = await decodeToMono(file, start, duration);
+        const decodedAudio = await decodeToMono(file, st, du);
         const { samples, sampleRate } = decodedAudio;
         if (samples.length === 0) {
           throw new Error("Decoded to zero samples — check the start/duration range.");
         }
         setStatus("analyzing");
         const out = await analyzeAudio(samples, sampleRate, {
-          minBpm,
-          maxBpm,
+          minBpm: mn,
+          maxBpm: mx,
           subharmonicPreference,
         });
         setResult(out);
@@ -95,8 +149,9 @@ export default function Analyzer() {
   const busy = status === "decoding" || status === "analyzing";
 
   const handleReanalyze = useCallback(() => {
-    if (currentFile) void runAnalysis(currentFile);
-  }, [currentFile, runAnalysis]);
+    const opts = commitOptions();
+    if (currentFile) void runAnalysis(currentFile, opts);
+  }, [currentFile, runAnalysis, commitOptions]);
 
   const handleDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
@@ -168,7 +223,13 @@ export default function Analyzer() {
 
       <details className="rounded-lg border border-border p-2.5 text-sm">
         <summary className="cursor-pointer font-medium text-foreground">Options</summary>
-        <div className="mt-2 grid grid-cols-2 gap-1.5">
+        <form
+          className="mt-2 grid grid-cols-2 gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleReanalyze();
+          }}
+        >
           <div className="flex flex-col gap-1">
             <Label htmlFor={`${fieldId}-min-bpm`} className="text-xs text-muted-foreground">
               Min BPM
@@ -176,12 +237,10 @@ export default function Analyzer() {
             <Input
               id={`${fieldId}-min-bpm`}
               type="number"
-              value={minBpm}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setMinBpm(v);
-                persistOption("minBpm", v);
-              }}
+              inputMode="decimal"
+              value={minBpmInput}
+              onChange={(e) => setMinBpmInput(e.target.value)}
+              onBlur={commitOptions}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -191,12 +250,10 @@ export default function Analyzer() {
             <Input
               id={`${fieldId}-max-bpm`}
               type="number"
-              value={maxBpm}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setMaxBpm(v);
-                persistOption("maxBpm", v);
-              }}
+              inputMode="decimal"
+              value={maxBpmInput}
+              onChange={(e) => setMaxBpmInput(e.target.value)}
+              onBlur={commitOptions}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -206,12 +263,10 @@ export default function Analyzer() {
             <Input
               id={`${fieldId}-start`}
               type="number"
-              value={start}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setStart(v);
-                persistOption("start", v);
-              }}
+              inputMode="decimal"
+              value={startInput}
+              onChange={(e) => setStartInput(e.target.value)}
+              onBlur={commitOptions}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -221,12 +276,10 @@ export default function Analyzer() {
             <Input
               id={`${fieldId}-duration`}
               type="number"
-              value={duration}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setDuration(v);
-                persistOption("duration", v);
-              }}
+              inputMode="decimal"
+              value={durationInput}
+              onChange={(e) => setDurationInput(e.target.value)}
+              onBlur={commitOptions}
             />
           </div>
           <div className="col-span-2 flex items-center gap-2">
@@ -246,7 +299,10 @@ export default function Analyzer() {
               Subharmonic preference (fixes triplet-feel songs reported at 3x tempo)
             </Label>
           </div>
-        </div>
+          {/* Invisible submit target: without a submit control, Enter in a
+              multi-field form doesn't reliably fire onSubmit in every browser. */}
+          <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+        </form>
       </details>
 
       {error && (
